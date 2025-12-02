@@ -75,8 +75,10 @@ impactful
 [Ii]nferencing
 [Ii]nterquartile
 isort
+Jama
 Jira
 jsonlines
+[Kk]aggle
 Langfuse
 LangChain
 LangGraph
@@ -157,6 +159,7 @@ triages
 [Uu]ploader
 [Uu]psert
 uv
+Vanna
 VectorDB
 [Ww]alkthrough
 [Ww]eb[Ss]ocket
