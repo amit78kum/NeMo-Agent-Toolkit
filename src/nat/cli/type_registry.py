@@ -58,6 +58,8 @@ from nat.data_models.function import FunctionBaseConfig
 from nat.data_models.function import FunctionConfigT
 from nat.data_models.function import FunctionGroupBaseConfig
 from nat.data_models.function import FunctionGroupConfigT
+from nat.data_models.function_policy import FunctionPolicyBaseConfig
+from nat.data_models.function_policy import FunctionPolicyBaseConfigT
 from nat.data_models.llm import LLMBaseConfig
 from nat.data_models.llm import LLMBaseConfigT
 from nat.data_models.logging import LoggingBaseConfig
@@ -77,6 +79,7 @@ from nat.data_models.telemetry_exporter import TelemetryExporterConfigT
 from nat.data_models.ttc_strategy import TTCStrategyBaseConfig
 from nat.data_models.ttc_strategy import TTCStrategyBaseConfigT
 from nat.experimental.test_time_compute.models.strategy_base import StrategyBase
+from nat.function_policy.interface import FunctionPolicyBase
 from nat.memory.interfaces import MemoryEditor
 from nat.middleware.middleware import Middleware
 from nat.object_store.interfaces import ObjectStore
@@ -92,6 +95,7 @@ EvaluatorBuildCallableT = Callable[[EvaluatorBaseConfigT, EvalBuilder], AsyncIte
 FrontEndBuildCallableT = Callable[[FrontEndConfigT, Config], AsyncIterator[FrontEndBase]]
 FunctionBuildCallableT = Callable[[FunctionConfigT, Builder], AsyncIterator[FunctionInfo | Callable | FunctionBase]]
 FunctionGroupBuildCallableT = Callable[[FunctionGroupConfigT, Builder], AsyncIterator[FunctionGroup]]
+FunctionPolicyBuildCallableT = Callable[[FunctionPolicyBaseConfigT, Builder], AsyncIterator[FunctionPolicyBase]]
 MiddlewareBuildCallableT = Callable[[MiddlewareBaseConfigT, Builder], AsyncIterator[Middleware]]
 TTCStrategyBuildCallableT = Callable[[TTCStrategyBaseConfigT, Builder], AsyncIterator[StrategyBase]]
 LLMClientBuildCallableT = Callable[[LLMBaseConfigT, Builder], AsyncIterator[typing.Any]]
@@ -115,6 +119,8 @@ FrontEndRegisteredCallableT = Callable[[FrontEndConfigT, Config], AbstractAsyncC
 FunctionRegisteredCallableT = Callable[[FunctionConfigT, Builder],
                                        AbstractAsyncContextManager[FunctionInfo | Callable | FunctionBase]]
 FunctionGroupRegisteredCallableT = Callable[[FunctionGroupConfigT, Builder], AbstractAsyncContextManager[FunctionGroup]]
+FunctionPolicyRegisteredCallableT = Callable[[FunctionPolicyBaseConfigT, Builder],
+                                             AbstractAsyncContextManager[FunctionPolicyBase]]
 MiddlewareRegisteredCallableT = Callable[[MiddlewareBaseConfigT, Builder], AbstractAsyncContextManager[Middleware]]
 TTCStrategyRegisterCallableT = Callable[[TTCStrategyBaseConfigT, Builder], AbstractAsyncContextManager[StrategyBase]]
 LLMClientRegisteredCallableT = Callable[[LLMBaseConfigT, Builder], AbstractAsyncContextManager[typing.Any]]
@@ -198,6 +204,15 @@ class RegisteredFunctionGroupInfo(RegisteredInfo[FunctionGroupBaseConfig]):
 
     build_fn: FunctionGroupRegisteredCallableT = Field(repr=False)
     framework_wrappers: list[str] = Field(default_factory=list)
+
+
+class RegisteredFunctionPolicyInfo(RegisteredInfo[FunctionPolicyBaseConfig]):
+    """
+    Represents a registered function policy. Function policies provide composable,
+    reusable logic for intercepting and modifying function inputs, outputs, and execution behavior.
+    """
+
+    build_fn: FunctionPolicyRegisteredCallableT = Field(repr=False)
 
 
 class RegisteredMiddlewareInfo(RegisteredInfo[MiddlewareBaseConfig]):
@@ -346,6 +361,9 @@ class TypeRegistry:
 
         # Function Groups
         self._registered_function_groups: dict[type[FunctionGroupBaseConfig], RegisteredFunctionGroupInfo] = {}
+
+        # Function Policies
+        self._registered_function_policies: dict[type[FunctionPolicyBaseConfig], RegisteredFunctionPolicyInfo] = {}
 
         # Middleware
         self._registered_middleware: dict[type[MiddlewareBaseConfig], RegisteredMiddlewareInfo] = {}
@@ -558,6 +576,49 @@ class TypeRegistry:
             list[RegisteredInfo[FunctionGroupBaseConfig]]: List of all registered function groups
         """
         return list(self._registered_function_groups.values())
+
+    def register_function_policy(self, registration: RegisteredFunctionPolicyInfo):
+        """Register a function policy with the type registry.
+
+        Args:
+            registration: The function policy registration information
+
+        Raises:
+            ValueError: If a function policy with the same config type is already registered
+        """
+        if (registration.config_type in self._registered_function_policies):
+            raise ValueError(f"Function policy with the same config type `{registration.config_type}` has already been "
+                             "registered.")
+
+        self._registered_function_policies[registration.config_type] = registration
+
+        self._registration_changed()
+
+    def get_function_policy(self, config_type: type[FunctionPolicyBaseConfig]) -> RegisteredFunctionPolicyInfo:
+        """Get a registered function policy by its config type.
+
+        Args:
+            config_type: The configuration type to look up
+
+        Returns:
+            RegisteredFunctionPolicyInfo: The registered function policy information
+
+        Raises:
+            KeyError: If the config type is not found
+        """
+        try:
+            return self._registered_function_policies[config_type]
+        except KeyError as err:
+            raise KeyError(f"Could not find a registered function policy for config `{config_type}`. "
+                           f"Registered configs: {set(self._registered_function_policies.keys())}") from err
+
+    def get_registered_function_policies(self) -> list[RegisteredInfo[FunctionPolicyBaseConfig]]:
+        """Get all registered function policies.
+
+        Returns:
+            list[RegisteredInfo[FunctionPolicyBaseConfig]]: List of all registered function policies
+        """
+        return list(self._registered_function_policies.values())
 
     def register_middleware(self, registration: RegisteredMiddlewareInfo):
         """Register middleware with the type registry.
@@ -1078,6 +1139,9 @@ class TypeRegistry:
 
         if issubclass(cls, FunctionGroupBaseConfig):
             return self._do_compute_annotation(cls, self.get_registered_function_groups())
+
+        if issubclass(cls, FunctionPolicyBaseConfig):
+            return self._do_compute_annotation(cls, self.get_registered_function_policies())
 
         if issubclass(cls, LLMBaseConfig):
             return self._do_compute_annotation(cls, self.get_registered_llm_providers())

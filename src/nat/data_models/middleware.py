@@ -13,10 +13,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import typing
+
+from pydantic import BaseModel
+from pydantic import Field
+from pydantic import model_validator
 
 from .common import BaseModelRegistryTag
 from .common import TypedBaseModel
+from .component import ComponentGroup
+from .component_ref import AuthenticationRef
+from .component_ref import EmbedderRef
+from .component_ref import FunctionPolicyRef
+from .component_ref import LLMRef
+from .component_ref import MemoryRef
+from .component_ref import ObjectStoreRef
+from .component_ref import RetrieverRef
 
 
 class MiddlewareBaseConfig(TypedBaseModel, BaseModelRegistryTag):
@@ -33,3 +47,110 @@ MiddlewareBaseConfigT = typing.TypeVar("MiddlewareBaseConfigT", bound=Middleware
 # Specialized type for function-specific middleware
 FunctionMiddlewareBaseConfig = MiddlewareBaseConfig
 FunctionMiddlewareBaseConfigT = MiddlewareBaseConfigT
+
+
+class AllowedComponentFunctions(BaseModel):
+    """Component functions allowed for auto-registration.
+
+    Default allowlists are provided for each component type. User-provided
+    values are automatically merged with defaults.
+    Set to None or omit to use only defaults.
+    """
+
+    llms: set[str] | None = Field(
+        default=None, description="Additional LLM functions that should be allowed to register with middleware.")
+    embedders: set[str] | None = Field(
+        default=None, description="Additional Embedder functions that should be allowed to register with middleware.")
+    retrievers: set[str] | None = Field(
+        default=None, description="Additional Retriever functions that should be allowed to register with middleware.")
+    memory: set[str] | None = Field(
+        default=None, description="Additional Memory functions that should be allowed to register with middleware.")
+    object_stores: set[str] | None = Field(
+        default=None,
+        description="Additional Object Store functions that should be allowed to register with middleware.")
+    authentication: set[str] | None = Field(
+        default=None,
+        description="Additional Authentication functions that should be allowed to register with middleware.")
+
+    @model_validator(mode='after')
+    def merge_with_defaults(self):
+        """Merge user-provided values with defaults from COMPONENT_FUNCTION_ALLOWLISTS."""
+        from nat.middleware.utils.workflow_inventory import COMPONENT_FUNCTION_ALLOWLISTS
+
+        def merge(component_group: ComponentGroup, user_set: set[str] | None) -> set[str]:
+            defaults = COMPONENT_FUNCTION_ALLOWLISTS[component_group]
+            if user_set is None:
+                return defaults.copy()
+            return defaults | user_set
+
+        self.llms = merge(ComponentGroup.LLMS, self.llms)
+        self.embedders = merge(ComponentGroup.EMBEDDERS, self.embedders)
+        self.retrievers = merge(ComponentGroup.RETRIEVERS, self.retrievers)
+        self.memory = merge(ComponentGroup.MEMORY, self.memory)
+        self.object_stores = merge(ComponentGroup.OBJECT_STORES, self.object_stores)
+        self.authentication = merge(ComponentGroup.AUTHENTICATION, self.authentication)
+
+        return self
+
+
+class DynamicMiddlewareConfig(FunctionMiddlewareBaseConfig, name="dynamic_middleware"):
+    """Configuration for dynamic middleware.
+
+    Controls which components and functions to intercept, and which policies to apply.
+    Supports explicit component references and auto-discovery flags.
+    """
+
+    # === First-Class Component References ===
+
+    llms: list[LLMRef] | None = Field(default_factory=list, description="LLMs to intercept")
+
+    embedders: list[EmbedderRef] | None = Field(default_factory=list,
+                                                description="Embedders component functions to intercept")
+
+    retrievers: list[RetrieverRef] | None = Field(default_factory=list,
+                                                  description="Retrievers component functions to intercept")
+
+    memory: list[MemoryRef] | None = Field(default_factory=list, description="Memory component functions to intercept")
+
+    object_stores: list[ObjectStoreRef] | None = Field(default_factory=list,
+                                                       description="Object stores component functions to intercept")
+
+    auth_providers: list[AuthenticationRef] | None = Field(
+        default_factory=list, description="Authentication providers component functions to intercept")
+
+    # === Component and Function Auto-Discovery Flags ===
+
+    register_llms: bool | None = Field(default=False,
+                                       description="Auto-discover and register all LLMs component functions")
+
+    register_embedders: bool | None = Field(default=False,
+                                            description="Auto-discover and register all embedders component functions")
+
+    register_retrievers: bool | None = Field(
+        default=False, description="Auto-discover and register all retrievers component functions")
+
+    register_memory: bool | None = Field(
+        default=False, description="Auto-discover and register all memory providers component functions")
+
+    register_object_stores: bool | None = Field(
+        default=False, description="Auto-discover and register all object stores component functions")
+
+    register_auth_providers: bool | None = Field(
+        default=False, description="Auto-discover and register all authentication providers component functions")
+
+    register_workflow_functions: bool | None = Field(default=False,
+                                                     description="Auto-discover and register all workflow functions")
+
+    # === Policy Configuration ===
+
+    pre_invoke_policy: list[FunctionPolicyRef] | None = Field(
+        default_factory=list, description="Policies to run before function execution (in order)")
+
+    post_invoke_policy: list[FunctionPolicyRef] | None = Field(
+        default_factory=list, description="Policies to run after function execution (in order)")
+
+    # === Component Function Allowlists ===
+
+    allowed_component_functions: AllowedComponentFunctions | None = Field(
+        default=None,
+        description="Functions allowed for auto-registration. Omit to use defaults, provide to extend them")

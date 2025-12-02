@@ -31,6 +31,7 @@ from nat.data_models.front_end import FrontEndBaseConfig
 from nat.data_models.function import EmptyFunctionConfig
 from nat.data_models.function import FunctionBaseConfig
 from nat.data_models.function import FunctionGroupBaseConfig
+from nat.data_models.function_policy import FunctionPolicyBaseConfig
 from nat.data_models.logging import LoggingBaseConfig
 from nat.data_models.optimizer import OptimizerConfig
 from nat.data_models.telemetry_exporter import TelemetryExporterBaseConfig
@@ -87,6 +88,8 @@ def _process_validation_error(err: ValidationError, handler: ValidatorFunctionWr
                 registered_keys = GlobalTypeRegistry.get().get_registered_front_ends()
             elif (info.field_name == "ttc_strategies"):
                 registered_keys = GlobalTypeRegistry.get().get_registered_ttc_strategies()
+            elif (info.field_name == "function_policies"):
+                registered_keys = GlobalTypeRegistry.get().get_registered_function_policies()
             elif (info.field_name == "middleware"):
                 registered_keys = GlobalTypeRegistry.get().get_registered_middleware()
 
@@ -256,6 +259,9 @@ class Config(HashableBaseModel):
     # Function Groups Configuration
     function_groups: dict[str, FunctionGroupBaseConfig] = Field(default_factory=dict)
 
+    # Function Policies Configuration
+    function_policies: dict[str, FunctionPolicyBaseConfig] = Field(default_factory=dict)
+
     # Middleware Configuration
     middleware: dict[str, FunctionMiddlewareBaseConfig] = Field(default_factory=dict)
 
@@ -306,9 +312,11 @@ class Config(HashableBaseModel):
         stream.write(f"Number of Retrievers: {len(self.retrievers)}\n")
         stream.write(f"Number of TTC Strategies: {len(self.ttc_strategies)}\n")
         stream.write(f"Number of Authentication Providers: {len(self.authentication)}\n")
+        stream.write(f"Number of Function Policies: {len(self.function_policies)}\n")
 
     @field_validator("functions",
                      "function_groups",
+                     "function_policies",
                      "middleware",
                      "llms",
                      "embedders",
@@ -354,6 +362,10 @@ class Config(HashableBaseModel):
         FunctionGroupsAnnotation = dict[str,
                                         typing.Annotated[type_registry.compute_annotation(FunctionGroupBaseConfig),
                                                          Discriminator(TypedBaseModel.discriminator)]]
+
+        FunctionPoliciesAnnotation = dict[str,
+                                          typing.Annotated[type_registry.compute_annotation(FunctionPolicyBaseConfig),
+                                                           Discriminator(TypedBaseModel.discriminator)]]
 
         MiddlewareAnnotation = dict[str,
                                     typing.Annotated[type_registry.compute_annotation(FunctionMiddlewareBaseConfig),
@@ -402,6 +414,11 @@ class Config(HashableBaseModel):
         function_groups_field = cls.model_fields.get("function_groups")
         if function_groups_field is not None and function_groups_field.annotation != FunctionGroupsAnnotation:
             function_groups_field.annotation = FunctionGroupsAnnotation
+            should_rebuild = True
+
+        function_policies_field = cls.model_fields.get("function_policies")
+        if function_policies_field is not None and function_policies_field.annotation != FunctionPoliciesAnnotation:
+            function_policies_field.annotation = FunctionPoliciesAnnotation
             should_rebuild = True
 
         middleware_field = cls.model_fields.get("middleware")

@@ -188,3 +188,14 @@ class MiddlewareRef(ComponentRef):
     @override
     def component_group(self):
         return ComponentGroup.MIDDLEWARE
+
+
+class FunctionPolicyRef(ComponentRef):
+    """
+    A reference to a function policy in a NAT configuration object.
+    """
+
+    @property
+    @override
+    def component_group(self):
+        return ComponentGroup.FUNCTION_POLICIES

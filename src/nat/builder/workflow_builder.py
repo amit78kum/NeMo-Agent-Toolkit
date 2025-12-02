@@ -48,6 +48,7 @@ from nat.data_models.component import ComponentGroup
 from nat.data_models.component_ref import AuthenticationRef
 from nat.data_models.component_ref import EmbedderRef
 from nat.data_models.component_ref import FunctionGroupRef
+from nat.data_models.component_ref import FunctionPolicyRef
 from nat.data_models.component_ref import FunctionRef
 from nat.data_models.component_ref import LLMRef
 from nat.data_models.component_ref import MemoryRef
@@ -61,6 +62,7 @@ from nat.data_models.embedder import EmbedderBaseConfig
 from nat.data_models.function import FunctionBaseConfig
 from nat.data_models.function import FunctionGroupBaseConfig
 from nat.data_models.function_dependencies import FunctionDependencies
+from nat.data_models.function_policy import FunctionPolicyBaseConfig
 from nat.data_models.llm import LLMBaseConfig
 from nat.data_models.memory import MemoryBaseConfig
 from nat.data_models.middleware import MiddlewareBaseConfig
@@ -72,6 +74,7 @@ from nat.experimental.decorators.experimental_warning_decorator import experimen
 from nat.experimental.test_time_compute.models.stage_enums import PipelineTypeEnum
 from nat.experimental.test_time_compute.models.stage_enums import StageTypeEnum
 from nat.experimental.test_time_compute.models.strategy_base import StrategyBase
+from nat.function_policy.interface import FunctionPolicyBase
 from nat.memory.interfaces import MemoryEditor
 from nat.middleware.function_middleware import FunctionMiddleware
 from nat.middleware.middleware import Middleware
@@ -151,6 +154,12 @@ class ConfiguredMiddleware:
     instance: Middleware
 
 
+@dataclasses.dataclass
+class ConfiguredFunctionPolicy:
+    config: "FunctionPolicyBaseConfig"
+    instance: "FunctionPolicyBase"
+
+
 class WorkflowBuilder(Builder, AbstractAsyncContextManager):
 
     def __init__(self, *, general_config: GeneralConfig | None = None, registry: TypeRegistry | None = None):
@@ -180,6 +189,7 @@ class WorkflowBuilder(Builder, AbstractAsyncContextManager):
         self._object_stores: dict[str, ConfiguredObjectStore] = {}
         self._retrievers: dict[str, ConfiguredRetriever] = {}
         self._ttc_strategies: dict[str, ConfiguredTTCStrategy] = {}
+        self._function_policies: dict[str, ConfiguredFunctionPolicy] = {}
         self._middleware: dict[str, ConfiguredMiddleware] = {}
 
         self._context_state = ContextState.get()
@@ -321,6 +331,10 @@ class WorkflowBuilder(Builder, AbstractAsyncContextManager):
         config = Config(general=self.general_config,
                         functions=function_configs,
                         function_groups=function_group_configs,
+                        function_policies={
+                            k: v.config
+                            for k, v in self._function_policies.items()
+                        },
                         workflow=self._workflow.config,
                         llms={
                             k: v.config
@@ -1079,6 +1093,75 @@ class WorkflowBuilder(Builder, AbstractAsyncContextManager):
         return self._middleware[middleware_name].config
 
     @override
+    async def add_function_policy(self, name: str | FunctionPolicyRef,
+                                  config: FunctionPolicyBaseConfig) -> FunctionPolicyBase:
+        """Add a function policy to the builder.
+
+        Args:
+            name: The name or reference for the function policy
+            config: The configuration for the function policy
+
+        Returns:
+            The built function policy instance
+
+        Raises:
+            ValueError: If the function policy already exists
+        """
+        if name in self._function_policies:
+            raise ValueError(f"Function policy `{name}` already exists in the list of function policies")
+
+        try:
+            policy_info = self._registry.get_function_policy(type(config))
+
+            policy_instance = await self._get_exit_stack().enter_async_context(policy_info.build_fn(config, self))
+
+            # Set the policy name after instantiation
+            policy_instance.name = str(name)
+
+            self._function_policies[name] = ConfiguredFunctionPolicy(config=config, instance=policy_instance)
+
+            return policy_instance
+        except Exception as e:
+            logger.error("Error adding function policy `%s` with config `%s`: %s", name, config, e)
+            raise
+
+    @override
+    async def get_function_policy(self, policy_name: str | FunctionPolicyRef) -> FunctionPolicyBase:
+        """Get built function policy by name.
+
+        Args:
+            policy_name: The name or reference of the function policy
+
+        Returns:
+            The built function policy instance
+
+        Raises:
+            ValueError: If the function policy doesn't exist
+        """
+        if policy_name not in self._function_policies:
+            raise ValueError(f"Function policy `{policy_name}` not found")
+
+        return self._function_policies[policy_name].instance
+
+    @override
+    def get_function_policy_config(self, policy_name: str | FunctionPolicyRef) -> FunctionPolicyBaseConfig:
+        """Get the configuration for a function policy.
+
+        Args:
+            policy_name: The name or reference of the function policy
+
+        Returns:
+            The configuration for the function policy
+
+        Raises:
+            ValueError: If the function policy doesn't exist
+        """
+        if policy_name not in self._function_policies:
+            raise ValueError(f"Function policy `{policy_name}` not found")
+
+        return self._function_policies[policy_name].config
+
+    @override
     def get_user_manager(self):
         return UserManagerHolder(context=Context(self._context_state))
 
@@ -1218,6 +1301,10 @@ class WorkflowBuilder(Builder, AbstractAsyncContextManager):
                 elif component_instance.component_group == ComponentGroup.RETRIEVERS:
                     await self.add_retriever(component_instance.name,
                                              cast(RetrieverBaseConfig, component_instance.config))
+                # Instantiate a function policy
+                elif component_instance.component_group == ComponentGroup.FUNCTION_POLICIES:
+                    await self.add_function_policy(component_instance.name,
+                                                   cast(FunctionPolicyBaseConfig, component_instance.config))
                 # Instantiate middleware
                 elif component_instance.component_group == ComponentGroup.MIDDLEWARE:
                     await self.add_middleware(component_instance.name,
@@ -1492,3 +1579,19 @@ class ChildBuilder(Builder):
     def get_middleware_config(self, middleware_name: str | MiddlewareRef) -> MiddlewareBaseConfig:
         """Get the configuration for middleware."""
         return self._workflow_builder.get_middleware_config(middleware_name)
+
+    @override
+    async def add_function_policy(self, name: str | FunctionPolicyRef,
+                                  config: FunctionPolicyBaseConfig) -> FunctionPolicyBase:
+        """Add a function policy to the builder."""
+        return await self._workflow_builder.add_function_policy(name, config)
+
+    @override
+    async def get_function_policy(self, policy_name: str | FunctionPolicyRef) -> FunctionPolicyBase:
+        """Get built function policy by name."""
+        return await self._workflow_builder.get_function_policy(policy_name)
+
+    @override
+    def get_function_policy_config(self, policy_name: str | FunctionPolicyRef) -> FunctionPolicyBaseConfig:
+        """Get the configuration for a function policy."""
+        return self._workflow_builder.get_function_policy_config(policy_name)

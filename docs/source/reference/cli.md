@@ -35,7 +35,9 @@ nat
 ├── eval
 ├── info
 │   ├── channels
-│   └── components
+│   ├── components
+│   ├── function-policies
+│   └── function-policy
 ├── mcp
 │   ├── client
 │   │   ├── ping
@@ -783,6 +785,52 @@ Options:
                                   Fields used when applying query.
   --help                          Show this message and exit.
 ```
+
+### Function Policies Information
+
+The `nat info function-policies` command lists all registered function policies available in your environment. Function policies are composable components that intercept and modify function calls, enabling capabilities such as input validation, output transformation, and observability.
+
+```console
+$ nat info function-policies
+Found 2 function policies:
+• my_package.input_sanitizer
+• my_package.audit_logger
+
+Use --verbose for detailed information
+```
+
+To view detailed information including descriptions and configuration schemas for all policies, use the `--verbose` flag:
+
+```console
+$ nat info function-policies --verbose
+```
+
+To view detailed information about a specific function policy, use:
+
+```console
+$ nat info function-policy <policy_name>
+
+Example:
+$ nat info function-policy my_package.input_sanitizer
+Function Policy: my_package.input_sanitizer
+Description: Sanitizes function inputs to prevent injection attacks
+Package: my_package
+Configuration Schema:
+  enabled (bool): Enable/disable this policy
+  log_level (str): Logging level
+Example Configuration:
+  my_policy:
+    _type: my_package.input_sanitizer
+    enabled: true
+    log_level: INFO
+```
+
+These commands help you:
+- Discover available function policies in your environment
+- Understand policy configuration options before using them
+- Generate example configuration snippets for your workflow YAML
+
+For more information on creating and using function policies, see [Function Policies](function-policies.md).
 
 ### Channels Information
 

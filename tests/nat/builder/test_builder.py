@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import logging
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,6 +35,7 @@ from nat.cli.register_workflow import register_embedder_client
 from nat.cli.register_workflow import register_embedder_provider
 from nat.cli.register_workflow import register_function
 from nat.cli.register_workflow import register_function_group
+from nat.cli.register_workflow import register_function_policy
 from nat.cli.register_workflow import register_llm_client
 from nat.cli.register_workflow import register_llm_provider
 from nat.cli.register_workflow import register_memory
@@ -49,6 +51,7 @@ from nat.data_models.config import GeneralConfig
 from nat.data_models.embedder import EmbedderBaseConfig
 from nat.data_models.function import FunctionBaseConfig
 from nat.data_models.function import FunctionGroupBaseConfig
+from nat.data_models.function_policy import FunctionPolicyBaseConfig
 from nat.data_models.intermediate_step import IntermediateStep
 from nat.data_models.llm import LLMBaseConfig
 from nat.data_models.memory import MemoryBaseConfig
@@ -60,6 +63,9 @@ from nat.data_models.ttc_strategy import TTCStrategyBaseConfig
 from nat.experimental.test_time_compute.models.stage_enums import PipelineTypeEnum
 from nat.experimental.test_time_compute.models.stage_enums import StageTypeEnum
 from nat.experimental.test_time_compute.models.strategy_base import StrategyBase
+from nat.function_policy.interface import FunctionPolicyBase
+from nat.function_policy.interface import PostInvokeContext
+from nat.function_policy.interface import PreInvokeContext
 from nat.memory.interfaces import MemoryEditor
 from nat.memory.models import MemoryItem
 from nat.object_store.in_memory_object_store import InMemoryObjectStore
@@ -106,6 +112,10 @@ class TObjectStoreConfig(ObjectStoreBaseConfig, name="test_object_store"):
 
 
 class TTTCStrategyConfig(TTCStrategyBaseConfig, name="test_ttc_strategy"):
+    raise_error: bool = False
+
+
+class TFunctionPolicyConfig(FunctionPolicyBaseConfig, name="test_function_policy"):
     raise_error: bool = False
 
 
@@ -284,6 +294,23 @@ async def _register():
                 return StageTypeEnum.SCORING
 
         yield DummyTTCStrategy(config)
+
+    @register_function_policy(config_type=TFunctionPolicyConfig)
+    async def register_function_policy_fn(config: TFunctionPolicyConfig, b: Builder):
+        if config.raise_error:
+            raise ValueError("Error")
+
+        class TestPolicy(FunctionPolicyBase[TFunctionPolicyConfig]):
+
+            async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
+                # Simple pass-through policy for testing
+                return context.function_input
+
+            async def on_post_invoke(self, context: PostInvokeContext) -> Any:
+                # Simple pass-through policy for testing
+                return context.function_output
+
+        yield TestPolicy(config)
 
     # Function Group registrations
     @register_function_group(config_type=IncludesFunctionGroupConfig)
@@ -890,6 +917,51 @@ async def test_get_ttc_strategy_and_config():
             )
 
 
+async def test_add_function_policy():
+
+    async with WorkflowBuilder() as builder:
+
+        await builder.add_function_policy("policy_name", TFunctionPolicyConfig())
+
+        with pytest.raises(ValueError):
+            await builder.add_function_policy("policy_name2", TFunctionPolicyConfig(raise_error=True))
+
+        # Try and add a policy with the same name
+        with pytest.raises(ValueError):
+            await builder.add_function_policy("policy_name", TFunctionPolicyConfig())
+
+
+async def test_get_function_policy():
+
+    async with WorkflowBuilder() as builder:
+
+        config = TFunctionPolicyConfig()
+
+        await builder.add_function_policy("policy_name", config)
+
+        policy = await builder.get_function_policy("policy_name")
+
+        assert policy.config == builder.get_function_policy_config("policy_name")
+        assert isinstance(policy, FunctionPolicyBase)
+
+        with pytest.raises(ValueError):
+            await builder.get_function_policy("policy_name_not_exist")
+
+
+async def test_get_function_policy_config():
+
+    async with WorkflowBuilder() as builder:
+
+        config = TFunctionPolicyConfig()
+
+        await builder.add_function_policy("policy_name", config)
+
+        assert builder.get_function_policy_config("policy_name") == config
+
+        with pytest.raises(ValueError):
+            builder.get_function_policy_config("policy_name_not_exist")
+
+
 async def test_built_config():
 
     general_config = GeneralConfig()
@@ -901,6 +973,7 @@ async def test_built_config():
     retriever_config = TRetrieverProviderConfig()
     object_store_config = TObjectStoreConfig()
     ttc_config = TTTCStrategyConfig()
+    function_policy_config = TFunctionPolicyConfig()
 
     async with WorkflowBuilder(general_config=general_config) as builder:
 
@@ -920,6 +993,8 @@ async def test_built_config():
 
         await builder.add_ttc_strategy("ttc_strategy", ttc_config)
 
+        await builder.add_function_policy("policy1", function_policy_config)
+
         workflow = await builder.build()
 
         workflow_config = workflow.config
@@ -933,6 +1008,7 @@ async def test_built_config():
         assert workflow_config.retrievers == {"retriever1": retriever_config}
         assert workflow_config.object_stores == {"object_store1": object_store_config}
         assert workflow_config.ttc_strategies == {"ttc_strategy": ttc_config}
+        assert workflow_config.function_policies == {"policy1": function_policy_config}
 
 
 # Function Group Tests

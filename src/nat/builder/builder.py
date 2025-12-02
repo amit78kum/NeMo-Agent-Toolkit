@@ -29,6 +29,7 @@ from nat.data_models.authentication import AuthProviderBaseConfig
 from nat.data_models.component_ref import AuthenticationRef
 from nat.data_models.component_ref import EmbedderRef
 from nat.data_models.component_ref import FunctionGroupRef
+from nat.data_models.component_ref import FunctionPolicyRef
 from nat.data_models.component_ref import FunctionRef
 from nat.data_models.component_ref import LLMRef
 from nat.data_models.component_ref import MemoryRef
@@ -41,6 +42,7 @@ from nat.data_models.evaluator import EvaluatorBaseConfig
 from nat.data_models.function import FunctionBaseConfig
 from nat.data_models.function import FunctionGroupBaseConfig
 from nat.data_models.function_dependencies import FunctionDependencies
+from nat.data_models.function_policy import FunctionPolicyBaseConfig
 from nat.data_models.llm import LLMBaseConfig
 from nat.data_models.memory import MemoryBaseConfig
 from nat.data_models.middleware import MiddlewareBaseConfig
@@ -50,6 +52,7 @@ from nat.data_models.ttc_strategy import TTCStrategyBaseConfig
 from nat.experimental.decorators.experimental_warning_decorator import experimental
 from nat.experimental.test_time_compute.models.stage_enums import PipelineTypeEnum
 from nat.experimental.test_time_compute.models.stage_enums import StageTypeEnum
+from nat.function_policy.interface import FunctionPolicyBase
 from nat.memory.interfaces import MemoryEditor
 from nat.middleware.middleware import Middleware
 from nat.object_store.interfaces import ObjectStore
@@ -340,6 +343,44 @@ class Builder(ABC):
         """
         tasks = [self.get_middleware(name) for name in middleware_names]
         return list(await asyncio.gather(*tasks, return_exceptions=False))
+
+    @abstractmethod
+    async def add_function_policy(self, name: str | FunctionPolicyRef,
+                                  config: FunctionPolicyBaseConfig) -> FunctionPolicyBase:
+        """Add a function policy to the builder.
+
+        Args:
+            name: The name or reference for the function policy
+            config: The configuration for the function policy
+
+        Returns:
+            The built function policy instance
+        """
+        pass
+
+    @abstractmethod
+    async def get_function_policy(self, policy_name: str | FunctionPolicyRef) -> FunctionPolicyBase:
+        """Get built function policy by name.
+
+        Args:
+            policy_name: The name or reference of the function policy
+
+        Returns:
+            The built function policy instance
+        """
+        pass
+
+    @abstractmethod
+    def get_function_policy_config(self, policy_name: str | FunctionPolicyRef) -> FunctionPolicyBaseConfig:
+        """Get the configuration for a function policy.
+
+        Args:
+            policy_name: The name or reference of the function policy
+
+        Returns:
+            The configuration for the function policy
+        """
+        pass
 
 
 class EvalBuilder(ABC):

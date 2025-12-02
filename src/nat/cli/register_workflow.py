@@ -29,6 +29,8 @@ from nat.cli.type_registry import FrontEndRegisteredCallableT
 from nat.cli.type_registry import FunctionBuildCallableT
 from nat.cli.type_registry import FunctionGroupBuildCallableT
 from nat.cli.type_registry import FunctionGroupRegisteredCallableT
+from nat.cli.type_registry import FunctionPolicyBuildCallableT
+from nat.cli.type_registry import FunctionPolicyRegisteredCallableT
 from nat.cli.type_registry import FunctionRegisteredCallableT
 from nat.cli.type_registry import LLMClientBuildCallableT
 from nat.cli.type_registry import LLMClientRegisteredCallableT
@@ -65,6 +67,7 @@ from nat.data_models.evaluator import EvaluatorBaseConfigT
 from nat.data_models.front_end import FrontEndConfigT
 from nat.data_models.function import FunctionConfigT
 from nat.data_models.function import FunctionGroupConfigT
+from nat.data_models.function_policy import FunctionPolicyBaseConfigT
 from nat.data_models.llm import LLMBaseConfigT
 from nat.data_models.memory import MemoryBaseConfigT
 from nat.data_models.middleware import MiddlewareBaseConfigT
@@ -259,6 +262,45 @@ def register_middleware(config_type: type[MiddlewareBaseConfigT]):
 
 # Compatibility alias for backwards compatibility
 register_function_middleware = register_middleware
+
+
+def register_function_policy(config_type: type[FunctionPolicyBaseConfigT]):
+    """
+    Register a function policy component.
+
+    Function policies provide composable, reusable logic for intercepting and modifying
+    function inputs, outputs, and execution behavior. They are built as components that
+    can be declaratively configured in workflows and applied through middleware.
+
+    Args:
+        config_type: The configuration type for the function policy
+
+    Returns:
+        A decorator that wraps the build function as an async context manager
+    """
+
+    def register_function_policy_inner(
+        fn: FunctionPolicyBuildCallableT[FunctionPolicyBaseConfigT]
+    ) -> FunctionPolicyRegisteredCallableT[FunctionPolicyBaseConfigT]:
+        from .type_registry import GlobalTypeRegistry
+        from .type_registry import RegisteredFunctionPolicyInfo
+
+        context_manager_fn = asynccontextmanager(fn)
+
+        discovery_metadata = DiscoveryMetadata.from_config_type(config_type=config_type,
+                                                                component_type=ComponentEnum.FUNCTION_POLICY)
+
+        GlobalTypeRegistry.get().register_function_policy(
+            RegisteredFunctionPolicyInfo(
+                full_type=config_type.full_type,
+                config_type=config_type,
+                build_fn=context_manager_fn,
+                discovery_metadata=discovery_metadata,
+            ))
+
+        return context_manager_fn
+
+    return register_function_policy_inner
 
 
 def register_llm_provider(config_type: type[LLMBaseConfigT]):

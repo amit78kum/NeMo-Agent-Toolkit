@@ -27,9 +27,9 @@ __all__ = [
     "CacheMiddleware",
     "CallNext",
     "CallNextStream",
-    "FunctionMiddlewareContext",
-    "Middleware",
     "FunctionMiddleware",
     "FunctionMiddlewareChain",
+    "FunctionMiddlewareContext",
+    "Middleware",
     "validate_middleware",
 ]
