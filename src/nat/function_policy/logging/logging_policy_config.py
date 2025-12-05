@@ -12,27 +12,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Base middleware configuration models."""
+"""Configuration for logging function policy."""
 
-from __future__ import annotations
+from pydantic import Field
 
-import typing
-
-from .common import BaseModelRegistryTag
-from .common import TypedBaseModel
+from nat.data_models.function_policy import FunctionPolicyBaseConfig
 
 
-class MiddlewareBaseConfig(TypedBaseModel, BaseModelRegistryTag):
-    """The base level config object for middleware.
+class LoggingPolicyConfig(FunctionPolicyBaseConfig, name="logging"):
+    """Configuration for logging policy."""
 
-    Middleware provides middleware-style wrapping of calls with
-    preprocessing and postprocessing logic.
-    """
-    pass
-
-
-MiddlewareBaseConfigT = typing.TypeVar("MiddlewareBaseConfigT", bound=MiddlewareBaseConfig)
-
-# Specialized type for function-specific middleware
-FunctionMiddlewareBaseConfig = MiddlewareBaseConfig
-FunctionMiddlewareBaseConfigT = MiddlewareBaseConfigT
+    log_level: str = Field(default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR)")
+    max_value_length: int = Field(default=200, description="Maximum length for logged values (truncated if exceeded)")

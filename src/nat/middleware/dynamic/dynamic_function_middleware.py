@@ -25,10 +25,10 @@ from nat.builder.builder import Builder
 from nat.builder.function import Function
 from nat.data_models.component import ComponentGroup
 from nat.data_models.component_ref import FunctionRef
-from nat.data_models.middleware import DynamicMiddlewareConfig
 from nat.function_policy.interface import FunctionPolicyBase
 from nat.function_policy.interface import PostInvokeContext
 from nat.function_policy.interface import PreInvokeContext
+from nat.middleware.dynamic.dynamic_middleware_config import DynamicMiddlewareConfig
 from nat.middleware.function_middleware import CallNext
 from nat.middleware.function_middleware import CallNextStream
 from nat.middleware.function_middleware import FunctionMiddleware
@@ -663,33 +663,43 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
 
     # ==================== Policy Orchestration ====================
 
-    async def function_middleware_invoke(self, value: Any, call_next: CallNext,
-                                         context: FunctionMiddlewareContext) -> Any:
+    async def function_middleware_invoke(self,
+                                         *args: Any,
+                                         call_next: CallNext,
+                                         context: FunctionMiddlewareContext,
+                                         **kwargs: Any) -> Any:
         """Execute function with policy orchestration for single-output.
 
         Runs pre-invoke policies, calls the function, then runs post-invoke policies.
         Each policy can transform the input/output.
 
         Args:
-            value: Input value
+            *args: Positional arguments
             call_next: Next middleware or function
             context: Function metadata
+            **kwargs: Additional function arguments
 
         Returns:
             The output from the function
         """
         # PRE-INVOKE: Build transformation chain through policies
-        pre_context = PreInvokeContext(function_context=context, original_input=value, function_input=value)
+        pre_context = PreInvokeContext(function_context=context,
+                                       original_args=args,
+                                       function_args=args,
+                                       function_kwargs=kwargs)
 
         for policy in self._pre_invoke_policies:
             if not policy.config.enabled:
                 continue
 
             try:
-                modified_input = await policy.on_pre_invoke(pre_context)
+                modified_args = await policy.on_pre_invoke(pre_context)
 
-                if modified_input is not None:
-                    pre_context.function_input = modified_input
+                if modified_args is not None:
+                    if len(modified_args) != len(pre_context.function_args):
+                        raise ValueError(f"Policy '{policy.name}' returned {len(modified_args)} args, "
+                                         f"expected {len(pre_context.function_args)}")
+                    pre_context.function_args = modified_args
             except Exception as e:
                 logger.error(
                     "Pre-invoke policy '%s' failed for function '%s' - skipping policy and continuing. Error: %s",
@@ -698,13 +708,14 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                     str(e),
                     exc_info=True)
 
-        # INVOKE: Call actual function with transformed input
-        output = await call_next(pre_context.function_input)
+        # INVOKE: Call actual function with transformed args
+        output = await call_next(*pre_context.function_args, **kwargs)
 
         # POST-INVOKE: Build transformation chain through policies
         post_context = PostInvokeContext(function_context=context,
-                                         original_input=value,
-                                         function_input=pre_context.function_input,
+                                         original_args=args,
+                                         function_args=pre_context.function_args,
+                                         function_kwargs=kwargs,
                                          function_output=output)
         current_output = output
 
@@ -728,38 +739,42 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
         return current_output
 
     async def function_middleware_stream(self,
-                                         value: Any,
+                                         *args: Any,
                                          call_next: CallNextStream,
-                                         context: FunctionMiddlewareContext) -> AsyncIterator[Any]:
+                                         context: FunctionMiddlewareContext,
+                                         **kwargs: Any) -> AsyncIterator[Any]:
         """Execute function with policy orchestration for streaming.
 
         Pre-invoke policies run once before streaming starts. Post-invoke policies
         apply to each chunk as it streams.
 
         Args:
-            value: Input value
+            *args: Positional arguments
             call_next: Next middleware or streaming function
             context: Function metadata
+            **kwargs: Additional function arguments
 
         Yields:
             Stream chunks (possibly transformed by policies)
         """
         # PRE-INVOKE: Build transformation chain through policies
-        pre_context = PreInvokeContext(
-            function_context=context,
-            original_input=value,
-            function_input=value  # Start with original
-        )
+        pre_context = PreInvokeContext(function_context=context,
+                                       original_args=args,
+                                       function_args=args,
+                                       function_kwargs=kwargs)
 
         for policy in self._pre_invoke_policies:
             if not policy.config.enabled:
                 continue
 
             try:
-                modified_input = await policy.on_pre_invoke(pre_context)
+                modified_args = await policy.on_pre_invoke(pre_context)
 
-                if modified_input is not None:
-                    pre_context.function_input = modified_input
+                if modified_args is not None:
+                    if len(modified_args) != len(pre_context.function_args):
+                        raise ValueError(f"Policy '{policy.name}' returned {len(modified_args)} args, "
+                                         f"expected {len(pre_context.function_args)}")
+                    pre_context.function_args = modified_args
             except Exception as e:
                 logger.error(
                     "Pre-invoke policy '%s' failed for streaming function '%s' - skipping policy and continuing. Error: %s",
@@ -768,13 +783,14 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                     str(e),
                     exc_info=True)
 
-        # STREAM: Call function with transformed input and yield chunks
-        async for chunk in call_next(pre_context.function_input):
+        # STREAM: Call function with transformed args and yield chunks
+        async for chunk in call_next(*pre_context.function_args, **kwargs):
 
             # POST-INVOKE: Build transformation chain through policies for each chunk
             post_context = PostInvokeContext(function_context=context,
-                                             original_input=value,
-                                             function_input=pre_context.function_input,
+                                             original_args=args,
+                                             function_args=pre_context.function_args,
+                                             function_kwargs=kwargs,
                                              function_output=chunk)
             current_chunk = chunk
 

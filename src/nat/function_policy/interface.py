@@ -30,16 +30,18 @@ class PreInvokeContext:
     """Context for pre-invoke policy execution.
 
     Contains the current state of inputs before function execution. Middleware
-    updates function_input after each policy runs.
+    updates function_args after each policy runs.
 
     Attributes:
         function_context: Metadata about the function being intercepted
-        original_input: The original input from the user
-        function_input: The value that will be passed to the function
+        original_args: The original positional arguments (immutable)
+        function_args: The args that will be passed to the function (modifiable)
+        function_kwargs: Additional function arguments (read-only, for inspection)
     """
     function_context: FunctionMiddlewareContext
-    original_input: Any
-    function_input: Any
+    original_args: tuple[Any, ...]
+    function_args: tuple[Any, ...]
+    function_kwargs: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -50,13 +52,15 @@ class PostInvokeContext:
 
     Attributes:
         function_context: Metadata about the function being intercepted
-        original_input: The original input from the user
-        function_input: The input that was sent to the function
+        original_args: The original positional arguments
+        function_args: The args that were sent to the function
+        function_kwargs: Additional function arguments
         function_output: The output returned by the function
     """
     function_context: FunctionMiddlewareContext
-    original_input: Any
-    function_input: Any
+    original_args: tuple[Any, ...]
+    function_args: tuple[Any, ...]
+    function_kwargs: dict[str, Any]
     function_output: Any
 
 
@@ -86,19 +90,18 @@ class FunctionPolicyBase(ABC, Generic[PolicyConfigT]):
         self.name = name
 
     @abstractmethod
-    async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
+    async def on_pre_invoke(self, context: PreInvokeContext) -> tuple[Any, ...] | None:
         """Called before function execution.
 
-        Receives the current input state via context. Returns the input value
-        to pass forward. Returning None preserves the current input unchanged.
+        Receives the current args state via context. Returns the args tuple
+        to pass forward. Must return same length as original args.
+        Returning None preserves the current args unchanged.
 
         Args:
             context: Pre-invoke execution context
 
         Returns:
-            Transformed input value, or None to preserve current value
-
-
+            Tuple of args (same length as original), or None to preserve current
         """
         pass
 

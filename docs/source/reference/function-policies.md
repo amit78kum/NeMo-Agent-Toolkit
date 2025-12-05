@@ -50,10 +50,10 @@ Function policies are first-class components in NAT, just like LLMs, embedders, 
 ```yaml
 # Define policies in the function_policies section
 function_policies:
-  input_logger:
-    _type: input_logging
+  input_validator:
+    _type: input_validation
     enabled: true
-    log_level: INFO
+    max_length: 1000
 
   output_sanitizer:
     _type: output_sanitization
@@ -65,7 +65,7 @@ middleware:
   security_middleware:
     _type: dynamic_middleware
     register_workflow_functions: true
-    pre_invoke_policy: ["input_logger"]
+    pre_invoke_policy: ["input_validator"]
     post_invoke_policy: ["output_sanitizer"]
 
 # Middleware applies to workflow functions
@@ -74,6 +74,28 @@ workflow:
   middleware: ["security_middleware"]
   # Other workflow config...
 ```
+
+## Built-in Logging Policy
+
+NAT includes a built-in `logging` policy for observing function inputs and outputs:
+
+```yaml
+function_policies:
+  my_logger:
+    _type: logging
+    enabled: true
+    log_level: INFO
+    max_value_length: 200
+
+middleware:
+  observer:
+    _type: dynamic_middleware
+    register_llms: true
+    pre_invoke_policy: ["my_logger"]
+    post_invoke_policy: ["my_logger"]
+```
+
+This logs pre-invoke and post-invoke context values without modifying them.
 
 ## Creating Custom Function Policies
 
@@ -86,17 +108,11 @@ from pydantic import Field
 from nat.data_models.function_policy import FunctionPolicyBaseConfig
 
 
-class InputLoggingPolicyConfig(FunctionPolicyBaseConfig, name="input_logging"):
-    """Configuration for input logging policy."""
+class LoggingPolicyConfig(FunctionPolicyBaseConfig, name="logging"):
+    """Configuration for logging policy."""
 
-    log_level: str = Field(
-        default="INFO",
-        description="Logging level (DEBUG, INFO, WARNING, ERROR)"
-    )
-    include_function_name: bool = Field(
-        default=True,
-        description="Whether to log function names"
-    )
+    log_level: str = Field(default="INFO", description="Logging level")
+    max_value_length: int = Field(default=200, description="Max length for logged values")
 ```
 
 ### Step 2: Implement the Policy Class
@@ -112,32 +128,39 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class InputLoggingPolicy(FunctionPolicyBase[InputLoggingPolicyConfig]):
-    """Policy that logs function inputs and outputs."""
+class LoggingPolicy(FunctionPolicyBase[LoggingPolicyConfig]):
+    """Policy that logs function inputs and outputs without modification."""
 
-    async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
-        """Log input before function executes."""
-        log_level = getattr(logging, self.config.log_level.upper(), logging.INFO)
-
-        if self.config.include_function_name:
-            logger.log(log_level, f"Calling {context.function_context.name}")
-
-        logger.log(log_level, f"Input: {context.function_input}")
-
-        # Return input unchanged (or return modified input)
-        return context.function_input
+    async def on_pre_invoke(self, context: PreInvokeContext) -> tuple[Any, ...] | None:
+        """Log pre-invoke context."""
+        level = getattr(logging, self.config.log_level.upper(), logging.INFO)
+        logger.log(
+            level,
+            "[%s] pre_invoke: function=%s, args=%s",
+            self.name,
+            context.function_context.name,
+            self._truncate(context.function_args),
+        )
+        return None  # Don't modify args
 
     async def on_post_invoke(self, context: PostInvokeContext) -> Any:
-        """Log output after function executes."""
-        log_level = getattr(logging, self.config.log_level.upper(), logging.INFO)
+        """Log post-invoke context."""
+        level = getattr(logging, self.config.log_level.upper(), logging.INFO)
+        logger.log(
+            level,
+            "[%s] post_invoke: function=%s, output=%s",
+            self.name,
+            context.function_context.name,
+            self._truncate(context.function_output),
+        )
+        return None  # Don't modify output
 
-        if self.config.include_function_name:
-            logger.log(log_level, f"Finished {context.function_context.name}")
-
-        logger.log(log_level, f"Output: {context.function_output}")
-
-        # Return output unchanged (or return modified output)
-        return context.function_output
+    def _truncate(self, value: Any) -> str:
+        """Truncate value string representation if too long."""
+        s = repr(value)
+        if len(s) > self.config.max_value_length:
+            return s[: self.config.max_value_length] + "..."
+        return s
 ```
 
 ### Step 3: Register the Policy
@@ -149,10 +172,10 @@ from nat.cli.register_workflow import register_function_policy
 from nat.builder.builder import Builder
 
 
-@register_function_policy(config_type=InputLoggingPolicyConfig)
-async def input_logging(config: InputLoggingPolicyConfig, builder: Builder):
-    """Build an input logging policy from configuration."""
-    yield InputLoggingPolicy(config=config)
+@register_function_policy(config_type=LoggingPolicyConfig)
+async def logging_policy(config: LoggingPolicyConfig, builder: Builder):
+    """Build a logging policy from configuration."""
+    yield LoggingPolicy(config=config)
 ```
 
 ## Policy Execution Model
@@ -162,16 +185,16 @@ async def input_logging(config: InputLoggingPolicyConfig, builder: Builder):
 When a function is called, pre-invoke policies execute in order:
 
 ```
-Original Input (10)
+Original Args ((10,))
     ↓
-Policy 1: Add 5 → Returns 15
+Policy 1: Add 5 → Returns (15,)
     ↓
-Policy 2: Multiply by 2 → Returns 30
+Policy 2: Multiply by 2 → Returns (30,)
     ↓
 Function receives: 30
 ```
 
-Each policy receives the output from the previous policy via `context.function_input`. The `context.original_input` always contains the original value the user provided.
+Each policy receives the output from the previous policy via `context.function_args`. The `context.original_args` always contains the original args the user provided.
 
 ### Post-Invoke Pipeline
 
@@ -187,58 +210,62 @@ Policy 2: Round to nearest 10 → Returns 100
 User receives: 100
 ```
 
-Each policy receives the output from the previous policy as the second argument. The `PostInvokeContext` provides a complete audit trail with `original_input`, `function_input`, and `function_output`.
+Each policy receives the output from the previous policy as the second argument. The `PostInvokeContext` provides a complete audit trail with `original_args`, `function_args`, and `function_output`.
 
 ### Return Value Behavior
 
 **Transforming Values**:
 ```python
-async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
-    # Modify the input
-    return context.function_input + 1
+async def on_pre_invoke(self, context: PreInvokeContext) -> tuple[Any, ...] | None:
+    # Modify the first arg, return same-length tuple
+    modified_first = context.function_args[0] + 1
+    return (modified_first,) + context.function_args[1:]
 ```
 
 **Preserving Values**:
 ```python
-async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
+async def on_pre_invoke(self, context: PreInvokeContext) -> tuple[Any, ...] | None:
     # Log or validate without modifying
-    validate(context.function_input)
-    return context.function_input  # Or return None to preserve
+    validate(context.function_args[0])
+    return context.function_args  # Or return None to preserve
 ```
 
 **Blocking Execution**:
 ```python
-async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
-    if is_malicious(context.function_input):
+async def on_pre_invoke(self, context: PreInvokeContext) -> tuple[Any, ...] | None:
+    if is_malicious(context.function_args[0]):
         raise SecurityException("Blocked malicious input")
-    return context.function_input
+    return context.function_args
 ```
 
 ## Working with Context Objects
 
 ### PreInvokeContext
 
-Contains the current input state:
+Contains the current args state:
 
 ```python
 @dataclass
 class PreInvokeContext:
     function_context: FunctionMiddlewareContext  # Function metadata
-    original_input: Any  # What the user sent
-    function_input: Any  # Current value (after previous policies)
+    original_args: tuple[Any, ...]  # What the user sent
+    function_args: tuple[Any, ...]  # Current args (after previous policies)
+    function_kwargs: dict[str, Any]  # Keyword arguments (read-only)
 ```
 
 **Usage example**:
 ```python
-async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
-    # Check if input was already modified
-    if context.function_input != context.original_input:
-        logger.info("Input was modified by previous policy")
+async def on_pre_invoke(self, context: PreInvokeContext) -> tuple[Any, ...] | None:
+    # Check if args were already modified
+    if context.function_args != context.original_args:
+        logger.info("Args were modified by previous policy")
 
     # Get function name for logging
     logger.info(f"Processing {context.function_context.name}")
 
-    return transform(context.function_input)
+    # Modify first arg, return same-length tuple
+    modified_first = transform(context.function_args[0])
+    return (modified_first,) + context.function_args[1:]
 ```
 
 ### PostInvokeContext
@@ -249,8 +276,9 @@ Contains the complete execution state (frozen/immutable):
 @dataclass(frozen=True)
 class PostInvokeContext:
     function_context: FunctionMiddlewareContext  # Function metadata
-    original_input: Any  # What the user sent
-    function_input: Any  # What the function received
+    original_args: tuple[Any, ...]  # What the user sent
+    function_args: tuple[Any, ...]  # What the function received
+    function_kwargs: dict[str, Any]  # Keyword arguments
     function_output: Any  # What the function returned
 ```
 
@@ -258,8 +286,8 @@ class PostInvokeContext:
 ```python
 async def on_post_invoke(self, context: PostInvokeContext) -> Any:
     # Audit trail: see complete execution
-    logger.info(f"User sent: {context.original_input}")
-    logger.info(f"Function received: {context.function_input}")
+    logger.info(f"User sent: {context.original_args}")
+    logger.info(f"Function received: {context.function_args}")
     logger.info(f"Function returned: {context.function_output}")
 
     # Transform output if needed
@@ -276,15 +304,15 @@ Execute policies in order:
 function_policies:
   validator:
     _type: input_validation
-  logger:
-    _type: input_logging
+  rate_limiter:
+    _type: rate_limiting
   sanitizer:
     _type: output_sanitization
 
 middleware:
   my_middleware:
     _type: dynamic_middleware
-    pre_invoke_policy: ["validator", "logger"]  # Order matters
+    pre_invoke_policy: ["validator", "rate_limiter"]  # Order matters
     post_invoke_policy: ["sanitizer"]
 ```
 
@@ -294,10 +322,10 @@ All policies have an `enabled` configuration field:
 
 ```yaml
 function_policies:
-  debug_logger:
-    _type: input_logging
+  debug_validator:
+    _type: input_validation
     enabled: false  # Disabled - won't execute
-    log_level: DEBUG
+    max_length: 500
 ```
 
 ### Combining with Dynamic Middleware
@@ -332,13 +360,15 @@ Test policies independently:
 import pytest
 from unittest.mock import Mock
 from nat.function_policy.interface import PreInvokeContext
+from nat.function_policy.logging.logging_policy import LoggingPolicy
+from nat.function_policy.logging.logging_policy_config import LoggingPolicyConfig
 
 
 @pytest.mark.asyncio
-async def test_input_logging_policy():
-    """Test that policy logs input correctly."""
-    config = InputLoggingPolicyConfig(log_level="INFO")
-    policy = InputLoggingPolicy(config=config)
+async def test_logging_policy():
+    """Test that logging policy observes without modifying."""
+    config = LoggingPolicyConfig(log_level="DEBUG")
+    policy = LoggingPolicy(config=config)
 
     # Create mock context
     mock_context = Mock(spec=FunctionMiddlewareContext)
@@ -346,15 +376,16 @@ async def test_input_logging_policy():
 
     context = PreInvokeContext(
         function_context=mock_context,
-        original_input={"value": 10},
-        function_input={"value": 10}
+        original_args=({"value": 10},),
+        function_args=({"value": 10},),
+        function_kwargs={}
     )
 
     # Execute policy
     result = await policy.on_pre_invoke(context)
 
-    # Verify result
-    assert result == {"value": 10}
+    # Verify result is None (no modification)
+    assert result is None
 ```
 
 ### Integration Testing
@@ -367,7 +398,7 @@ async def test_policy_with_workflow():
     """Test policy integration with a workflow."""
     # Build workflow with policies
     builder = WorkflowBuilder()
-    await builder.add_function_policy("logger", InputLoggingPolicyConfig())
+    await builder.add_function_policy("logger", LoggingPolicyConfig())
     # ... build workflow ...
 
     # Run workflow and verify policy executed
@@ -392,10 +423,10 @@ async def test_policy_with_workflow():
 **Raise exceptions to block**: If a policy needs to stop execution, raise an exception:
 
 ```python
-async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
-    if not is_valid(context.function_input):
+async def on_pre_invoke(self, context: PreInvokeContext) -> tuple[Any, ...] | None:
+    if context.function_args and not is_valid(context.function_args[0]):
         raise ValueError("Invalid input")
-    return context.function_input
+    return context.function_args
 ```
 
 **Log errors appropriately**: Use structured logging for debugging:
@@ -416,12 +447,13 @@ except Exception as e:
 **Use async operations**: Policies are async - you can use `await` for I/O operations:
 
 ```python
-async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
+async def on_pre_invoke(self, context: PreInvokeContext) -> tuple[Any, ...] | None:
     # Async validation against external service
-    is_valid = await validate_with_service(context.function_input)
-    if not is_valid:
-        raise ValidationError("Input rejected by service")
-    return context.function_input
+    if context.function_args:
+        is_valid = await validate_with_service(context.function_args[0])
+        if not is_valid:
+            raise ValidationError("Input rejected by service")
+    return context.function_args
 ```
 
 **Consider caching**: For expensive operations, cache results when possible.
@@ -449,7 +481,7 @@ nat info function-policy <policy_name>
 Example:
 
 ```bash
-nat info function-policy input_logging
+nat info function-policy logging
 ```
 
 ## Relationship to Middleware
@@ -489,12 +521,12 @@ See the [Middleware](middleware.md) documentation for more details on middleware
 class SecurityMonitorPolicy(FunctionPolicyBase[SecurityMonitorPolicyConfig]):
     """Monitor function calls for security threats."""
 
-    async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
-        # Check for suspicious patterns
-        if contains_sql_injection(context.function_input):
+    async def on_pre_invoke(self, context: PreInvokeContext) -> tuple[Any, ...] | None:
+        # Check for suspicious patterns in first arg
+        if context.function_args and contains_sql_injection(context.function_args[0]):
             logger.warning(f"SQL injection attempt in {context.function_context.name}")
             raise SecurityException("Blocked suspicious input")
-        return context.function_input
+        return context.function_args
 
     async def on_post_invoke(self, context: PostInvokeContext) -> Any:
         # Check for data leaks in output
@@ -510,14 +542,17 @@ class SecurityMonitorPolicy(FunctionPolicyBase[SecurityMonitorPolicyConfig]):
 class InputSanitizationPolicy(FunctionPolicyBase[InputSanitizationPolicyConfig]):
     """Sanitize inputs before function execution."""
 
-    async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
-        # Remove dangerous characters
-        sanitized = sanitize_input(context.function_input)
+    async def on_pre_invoke(self, context: PreInvokeContext) -> tuple[Any, ...] | None:
+        if not context.function_args:
+            return context.function_args
 
-        if sanitized != context.function_input:
+        # Remove dangerous characters from first arg
+        sanitized = sanitize_input(context.function_args[0])
+
+        if sanitized != context.function_args[0]:
             logger.info(f"Sanitized input for {context.function_context.name}")
 
-        return sanitized
+        return (sanitized,) + context.function_args[1:]
 ```
 
 ### Performance Monitoring
@@ -526,10 +561,10 @@ class InputSanitizationPolicy(FunctionPolicyBase[InputSanitizationPolicyConfig])
 class PerformanceMonitorPolicy(FunctionPolicyBase[PerformanceMonitorPolicyConfig]):
     """Monitor function execution time."""
 
-    async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
+    async def on_pre_invoke(self, context: PreInvokeContext) -> tuple[Any, ...] | None:
         # Store start time (you'd use a more sophisticated approach in practice)
         self._start_times[context.function_context.name] = time.time()
-        return context.function_input
+        return context.function_args
 
     async def on_post_invoke(self, context: PostInvokeContext) -> Any:
         # Calculate and log execution time

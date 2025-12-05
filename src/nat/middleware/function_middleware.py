@@ -49,24 +49,35 @@ class FunctionMiddleware(Middleware):
     the base ``middleware_invoke`` and ``middleware_stream`` methods.
     """
 
-    async def middleware_invoke(self, value: Any, call_next: CallNext, context: FunctionMiddlewareContext) -> Any:
+    async def middleware_invoke(self,
+                                *args: Any,
+                                call_next: CallNext,
+                                context: FunctionMiddlewareContext,
+                                **kwargs: Any) -> Any:
         """Delegate to function_middleware_invoke for function-specific handling."""
-        return await self.function_middleware_invoke(value, call_next, context)
+        return await self.function_middleware_invoke(*args, call_next=call_next, context=context, **kwargs)
 
-    async def middleware_stream(self, value: Any, call_next: CallNextStream,
-                                context: FunctionMiddlewareContext) -> AsyncIterator[Any]:
+    async def middleware_stream(self,
+                                *args: Any,
+                                call_next: CallNextStream,
+                                context: FunctionMiddlewareContext,
+                                **kwargs: Any) -> AsyncIterator[Any]:
         """Delegate to function_middleware_stream for function-specific handling."""
-        async for chunk in self.function_middleware_stream(value, call_next, context):
+        async for chunk in self.function_middleware_stream(*args, call_next=call_next, context=context, **kwargs):
             yield chunk
 
-    async def function_middleware_invoke(self, value: Any, call_next: CallNext,
-                                         context: FunctionMiddlewareContext) -> Any:
+    async def function_middleware_invoke(self,
+                                         *args: Any,
+                                         call_next: CallNext,
+                                         context: FunctionMiddlewareContext,
+                                         **kwargs: Any) -> Any:
         """Function-specific middleware for single-output invocations.
 
         Args:
-            value: The input value to process
+            *args: The positional arguments to process
             call_next: Callable to invoke the next middleware or function
             context: Metadata about the function being wrapped
+            **kwargs: Additional function arguments
 
         Returns:
             The (potentially modified) output from the function
@@ -74,18 +85,20 @@ class FunctionMiddleware(Middleware):
         The default implementation simply delegates to ``call_next``. Override this
         in subclasses to add function-specific preprocessing and postprocessing.
         """
-        return await call_next(value)
+        return await call_next(*args, **kwargs)
 
     async def function_middleware_stream(self,
-                                         value: Any,
+                                         *args: Any,
                                          call_next: CallNextStream,
-                                         context: FunctionMiddlewareContext) -> AsyncIterator[Any]:
+                                         context: FunctionMiddlewareContext,
+                                         **kwargs: Any) -> AsyncIterator[Any]:
         """Function-specific middleware for streaming invocations.
 
         Args:
-            value: The input value to process
+            *args: The positional arguments to process
             call_next: Callable to invoke the next middleware or function stream
             context: Metadata about the function being wrapped
+            **kwargs: Additional function arguments
 
         Yields:
             Chunks from the stream (potentially modified)
@@ -93,7 +106,7 @@ class FunctionMiddleware(Middleware):
         The default implementation forwards to ``call_next`` untouched. Override this
         in subclasses to add function-specific preprocessing and chunk transformations.
         """
-        async for chunk in call_next(value):
+        async for chunk in call_next(*args, **kwargs):
             yield chunk
 
 
@@ -123,10 +136,13 @@ class FunctionMiddlewareChain:
         for mw in reversed(self._middleware):
             call_next = call
 
-            async def wrapped(value: Any, *, _middleware: Middleware = mw, _call_next: CallNext = call_next) -> Any:
-                return await _middleware.middleware_invoke(value, _call_next, self._context)
+            async def wrapped(*args: Any,
+                              _middleware: Middleware = mw,
+                              _call_next: CallNext = call_next,
+                              **kwargs: Any) -> Any:
+                return await _middleware.middleware_invoke(*args, call_next=_call_next, context=self._context, **kwargs)
 
-            call = wrapped
+            call = wrapped  # type: ignore[assignment]
 
         return call
 
@@ -144,14 +160,15 @@ class FunctionMiddlewareChain:
         for mw in reversed(self._middleware):
             call_next = call
 
-            async def wrapped(value: Any,
-                              *,
+            async def wrapped(*args: Any,
                               _middleware: Middleware = mw,
-                              _call_next: CallNextStream = call_next) -> AsyncIterator[Any]:
-                async for chunk in _middleware.middleware_stream(value, _call_next, self._context):
+                              _call_next: CallNextStream = call_next,
+                              **kwargs: Any) -> AsyncIterator[Any]:
+                stream = _middleware.middleware_stream(*args, call_next=_call_next, context=self._context, **kwargs)
+                async for chunk in stream:
                     yield chunk
 
-            call = wrapped
+            call = wrapped  # type: ignore[assignment]
 
         return call
 

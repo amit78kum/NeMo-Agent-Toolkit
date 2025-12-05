@@ -32,10 +32,10 @@ from typing import Any
 from pydantic import BaseModel
 
 #: Type alias for single-output invocation callables.
-CallNext = Callable[[Any], Awaitable[Any]]
+CallNext = Callable[..., Awaitable[Any]]
 
 #: Type alias for streaming invocation callables.
-CallNextStream = Callable[[Any], AsyncIterator[Any]]
+CallNextStream = Callable[..., AsyncIterator[Any]]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -79,12 +79,12 @@ class Middleware(ABC):
     Example::
 
         class LoggingMiddleware(Middleware):
-            async def middleware_invoke(self, value, call_next, context):
+            async def middleware_invoke(self, value, call_next, context, **kwargs):
                 # 1. Preprocess
                 print(f"Input: {value}")
 
                 # 2. Call next middleware/target
-                result = await call_next(value)
+                result = await call_next(value, **kwargs)
 
                 # 3. Postprocess
                 print(f"Output: {result}")
@@ -111,13 +111,18 @@ class Middleware(ABC):
 
         return self._is_final
 
-    async def middleware_invoke(self, value: Any, call_next: CallNext, context: FunctionMiddlewareContext) -> Any:
+    async def middleware_invoke(self,
+                                value: Any,
+                                call_next: CallNext,
+                                context: FunctionMiddlewareContext,
+                                **kwargs: Any) -> Any:
         """Middleware for single-output invocations.
 
         Args:
             value: The input value to process
             call_next: Callable to invoke the next middleware or target
             context: Metadata about the target being wrapped
+            **kwargs: Additional function arguments
 
         Returns:
             The (potentially modified) output from the target
@@ -125,12 +130,12 @@ class Middleware(ABC):
         The default implementation simply delegates to ``call_next``. Override this
         to add preprocessing, postprocessing, or to short-circuit execution::
 
-            async def middleware_invoke(self, value, call_next, context):
+            async def middleware_invoke(self, value, call_next, context, **kwargs):
                 # Preprocess: modify input
                 modified_input = transform(value)
 
                 # Call next: delegate to next middleware/target
-                result = await call_next(modified_input)
+                result = await call_next(modified_input, **kwargs)
 
                 # Postprocess: modify output
                 modified_result = transform_output(result)
@@ -140,16 +145,20 @@ class Middleware(ABC):
         """
 
         del context  # Unused by the default implementation.
-        return await call_next(value)
+        return await call_next(value, **kwargs)
 
-    async def middleware_stream(self, value: Any, call_next: CallNextStream,
-                                context: FunctionMiddlewareContext) -> AsyncIterator[Any]:
+    async def middleware_stream(self,
+                                value: Any,
+                                call_next: CallNextStream,
+                                context: FunctionMiddlewareContext,
+                                **kwargs: Any) -> AsyncIterator[Any]:
         """Middleware for streaming invocations.
 
         Args:
             value: The input value to process
             call_next: Callable to invoke the next middleware or target stream
             context: Metadata about the target being wrapped
+            **kwargs: Additional function arguments
 
         Yields:
             Chunks from the stream (potentially modified)
@@ -157,12 +166,12 @@ class Middleware(ABC):
         The default implementation forwards to ``call_next`` untouched. Override this
         to add preprocessing, transform chunks, or perform cleanup::
 
-            async def middleware_stream(self, value, call_next, context):
+            async def middleware_stream(self, value, call_next, context, **kwargs):
                 # Preprocess: setup or modify input
                 modified_input = transform(value)
 
                 # Call next: get stream from next middleware/target
-                async for chunk in call_next(modified_input):
+                async for chunk in call_next(modified_input, **kwargs):
                     # Process each chunk
                     modified_chunk = transform_chunk(chunk)
                     yield modified_chunk
@@ -172,7 +181,7 @@ class Middleware(ABC):
         """
 
         del context  # Unused by the default implementation.
-        async for chunk in call_next(value):
+        async for chunk in call_next(value, **kwargs):
             yield chunk
 
 

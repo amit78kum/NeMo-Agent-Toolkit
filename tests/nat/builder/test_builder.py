@@ -302,9 +302,9 @@ async def _register():
 
         class TestPolicy(FunctionPolicyBase[TFunctionPolicyConfig]):
 
-            async def on_pre_invoke(self, context: PreInvokeContext) -> Any:
+            async def on_pre_invoke(self, context: PreInvokeContext) -> tuple | None:
                 # Simple pass-through policy for testing
-                return context.function_input
+                return context.function_args
 
             async def on_post_invoke(self, context: PostInvokeContext) -> Any:
                 # Simple pass-through policy for testing

@@ -12,27 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Base middleware configuration models."""
 
-from __future__ import annotations
+# flake8: noqa
 
-import typing
-
-from .common import BaseModelRegistryTag
-from .common import TypedBaseModel
-
-
-class MiddlewareBaseConfig(TypedBaseModel, BaseModelRegistryTag):
-    """The base level config object for middleware.
-
-    Middleware provides middleware-style wrapping of calls with
-    preprocessing and postprocessing logic.
-    """
-    pass
-
-
-MiddlewareBaseConfigT = typing.TypeVar("MiddlewareBaseConfigT", bound=MiddlewareBaseConfig)
-
-# Specialized type for function-specific middleware
-FunctionMiddlewareBaseConfig = MiddlewareBaseConfig
-FunctionMiddlewareBaseConfigT = MiddlewareBaseConfigT
+from nat.function_policy.logging import register as register_logging

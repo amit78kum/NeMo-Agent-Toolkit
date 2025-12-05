@@ -33,8 +33,8 @@ class SamplePolicyConfig(FunctionPolicyBaseConfig, name="sample_policy"):
 class SamplePolicy(FunctionPolicyBase[SamplePolicyConfig]):
     """Sample policy implementation for testing."""
 
-    async def on_pre_invoke(self, context: PreInvokeContext) -> any:
-        return context.function_input
+    async def on_pre_invoke(self, context: PreInvokeContext) -> tuple | None:
+        return context.function_args
 
     async def on_post_invoke(self, context: PostInvokeContext) -> any:
         return context.function_output
@@ -55,45 +55,48 @@ def mock_function_context():
 
 def test_pre_invoke_context_creation(mock_function_context):
     """Test creating a PreInvokeContext."""
-    original_input = {"key": "value"}
-    function_input = {"key": "modified"}
+    original_args = ({"key": "value"}, )
+    function_args = ({"key": "modified"}, )
 
     context = PreInvokeContext(function_context=mock_function_context,
-                               original_input=original_input,
-                               function_input=function_input)
+                               original_args=original_args,
+                               function_args=function_args,
+                               function_kwargs={})
 
     assert context.function_context == mock_function_context
-    assert context.original_input == original_input
-    assert context.function_input == function_input
+    assert context.original_args == original_args
+    assert context.function_args == function_args
 
 
-def test_pre_invoke_context_function_input_mutable(mock_function_context):
-    """Test that PreInvokeContext.function_input can be modified."""
-    original_input = {"key": "value"}
+def test_pre_invoke_context_function_args_mutable(mock_function_context):
+    """Test that PreInvokeContext.function_args can be modified."""
+    original_args = ({"key": "value"}, )
     context = PreInvokeContext(function_context=mock_function_context,
-                               original_input=original_input,
-                               function_input=original_input)
+                               original_args=original_args,
+                               function_args=original_args,
+                               function_kwargs={})
 
-    # Middleware should be able to update function_input
-    new_input = {"key": "modified"}
-    context.function_input = new_input
-    assert context.function_input == new_input
-    assert context.original_input == original_input  # Should remain unchanged
+    # Middleware should be able to update function_args
+    new_args = ({"key": "modified"}, )
+    context.function_args = new_args
+    assert context.function_args == new_args
+    assert context.original_args == original_args  # Should remain unchanged
 
 
-def test_pre_invoke_context_preserves_original_input(mock_function_context):
-    """Test that original_input is preserved during modifications."""
-    original_input = {"key": "value"}
+def test_pre_invoke_context_preserves_original_args(mock_function_context):
+    """Test that original_args is preserved during modifications."""
+    original_args = ({"key": "value"}, )
     context = PreInvokeContext(function_context=mock_function_context,
-                               original_input=original_input,
-                               function_input=original_input)
+                               original_args=original_args,
+                               function_args=original_args,
+                               function_kwargs={})
 
-    # Modify function_input
-    context.function_input = {"key": "modified"}
+    # Modify function_args
+    context.function_args = ({"key": "modified"}, )
 
     # Original should be unchanged
-    assert context.original_input == {"key": "value"}
-    assert context.function_input == {"key": "modified"}
+    assert context.original_args == ({"key": "value"}, )
+    assert context.function_args == ({"key": "modified"}, )
 
 
 # ==================== Test PostInvokeContext ====================
@@ -101,34 +104,40 @@ def test_pre_invoke_context_preserves_original_input(mock_function_context):
 
 def test_post_invoke_context_creation(mock_function_context):
     """Test creating a PostInvokeContext."""
-    original_input = {"key": "original"}
-    function_input = {"key": "modified"}
+    original_args = ({"key": "original"}, )
+    function_args = ({"key": "modified"}, )
     function_output = {"result": "success"}
 
     context = PostInvokeContext(function_context=mock_function_context,
-                                original_input=original_input,
-                                function_input=function_input,
+                                original_args=original_args,
+                                function_args=function_args,
+                                function_kwargs={},
                                 function_output=function_output)
 
     assert context.function_context == mock_function_context
-    assert context.original_input == original_input
-    assert context.function_input == function_input
+    assert context.original_args == original_args
+    assert context.function_args == function_args
     assert context.function_output == function_output
 
 
 def test_post_invoke_context_is_frozen(mock_function_context):
     """Test that PostInvokeContext is immutable (frozen)."""
     context = PostInvokeContext(function_context=mock_function_context,
-                                original_input={"key": "value"},
-                                function_input={"key": "modified"},
+                                original_args=({
+                                    "key": "value"
+                                }, ),
+                                function_args=({
+                                    "key": "modified"
+                                }, ),
+                                function_kwargs={},
                                 function_output={"result": "success"})
 
     # Should not be able to modify any field
     with pytest.raises(FrozenInstanceError):
-        context.original_input = {"new": "value"}
+        context.original_args = ({"new": "value"}, )
 
     with pytest.raises(FrozenInstanceError):
-        context.function_input = {"new": "value"}
+        context.function_args = ({"new": "value"}, )
 
     with pytest.raises(FrozenInstanceError):
         context.function_output = {"new": "result"}
@@ -136,18 +145,19 @@ def test_post_invoke_context_is_frozen(mock_function_context):
 
 def test_post_invoke_context_provides_full_audit_trail(mock_function_context):
     """Test that PostInvokeContext contains complete audit trail."""
-    original = {"user": "input"}
-    modified = {"user": "sanitized_input"}
+    original = ({"user": "input"}, )
+    modified = ({"user": "sanitized_input"}, )
     output = {"result": "success"}
 
     context = PostInvokeContext(function_context=mock_function_context,
-                                original_input=original,
-                                function_input=modified,
+                                original_args=original,
+                                function_args=modified,
+                                function_kwargs={},
                                 function_output=output)
 
     # All values should be accessible for audit
-    assert context.original_input == original
-    assert context.function_input == modified
+    assert context.original_args == original
+    assert context.function_args == modified
     assert context.function_output == output
 
 
@@ -186,11 +196,16 @@ async def test_policy_can_access_context_in_pre_invoke(mock_function_context):
     policy = SamplePolicy(config=config)
 
     context = PreInvokeContext(function_context=mock_function_context,
-                               original_input={"value": 10},
-                               function_input={"value": 10})
+                               original_args=({
+                                   "value": 10
+                               }, ),
+                               function_args=({
+                                   "value": 10
+                               }, ),
+                               function_kwargs={})
 
     result = await policy.on_pre_invoke(context)
-    assert result == {"value": 10}
+    assert result == ({"value": 10}, )
 
 
 async def test_policy_can_access_context_in_post_invoke(mock_function_context):
@@ -199,8 +214,13 @@ async def test_policy_can_access_context_in_post_invoke(mock_function_context):
     policy = SamplePolicy(config=config)
 
     context = PostInvokeContext(function_context=mock_function_context,
-                                original_input={"value": 10},
-                                function_input={"value": 11},
+                                original_args=({
+                                    "value": 10
+                                }, ),
+                                function_args=({
+                                    "value": 11
+                                }, ),
+                                function_kwargs={},
                                 function_output={"result": 21})
 
     result = await policy.on_post_invoke(context)
