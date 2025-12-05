@@ -128,17 +128,18 @@ class LoggingMiddleware(FunctionMiddleware):
 
     async def function_middleware_invoke(
         self,
-        value: Any,
+        *args: Any,
         call_next: CallNext,
-        context: FunctionMiddlewareContext
+        context: FunctionMiddlewareContext,
+        **kwargs: Any
     ) -> Any:
         """Middleware for single-output invocations."""
         # Phase 1: Preprocess
         if self.include_inputs:
-            self.logger.info(f"Calling {context.name} with input: {value}")
+            self.logger.info(f"Calling {context.name} with args: {args}")
 
-        # Phase 2: Call next
-        result = await call_next(value)
+        # Phase 2: Call next (forward all args and kwargs)
+        result = await call_next(*args, **kwargs)
 
         # Phase 3: Postprocess
         if self.include_outputs:
@@ -149,18 +150,19 @@ class LoggingMiddleware(FunctionMiddleware):
 
     async def function_middleware_stream(
         self,
-        value: Any,
+        *args: Any,
         call_next: CallNextStream,
-        context: FunctionMiddlewareContext
+        context: FunctionMiddlewareContext,
+        **kwargs: Any
     ) -> AsyncIterator[Any]:
         """Middleware for streaming invocations."""
         # Phase 1: Preprocess
         if self.include_inputs:
-            self.logger.info(f"Streaming call to {context.name} with input: {value}")
+            self.logger.info(f"Streaming call to {context.name} with args: {args}")
 
         # Phase 2-3: Call next and yield chunks
         chunk_count = 0
-        async for chunk in call_next(value):
+        async for chunk in call_next(*args, **kwargs):
             chunk_count += 1
             yield chunk
 
@@ -340,8 +342,9 @@ class ValidationMiddleware(FunctionMiddleware):
         super().__init__(is_final=True)  # Mark as final
         self.strict_mode = strict_mode
 
-    async def function_middleware_invoke(self, value, call_next, context):
-        # Validate input against schema
+    async def function_middleware_invoke(self, *args, call_next, context, **kwargs):
+        # Validate input against schema (using first arg)
+        value = args[0] if args else None
         try:
             validated = context.input_schema.model_validate(value)
         except ValidationError as e:
@@ -352,7 +355,7 @@ class ValidationMiddleware(FunctionMiddleware):
                 validated = value
 
         # Only call next if validation passed
-        return await call_next(validated)
+        return await call_next(validated, *args[1:], **kwargs)
 ```
 
 ### Chaining Multiple Middleware
@@ -523,12 +526,14 @@ async def test_logging_middleware():
         stream_output_schema=None
     )
 
-    # Mock call_next
-    async def mock_next(value):
-        return {"result": value * 2}
+    # Mock call_next (accepts *args, **kwargs)
+    async def mock_next(*args, **kwargs):
+        return {"result": args[0] * 2}
 
     # Test middleware
-    result = await middleware.function_middleware_invoke(5, mock_next, context)
+    result = await middleware.function_middleware_invoke(
+        5, call_next=mock_next, context=context
+    )
     assert result == {"result": 10}
 ```
 
@@ -665,8 +670,8 @@ Solution: Ensure the register module is imported. NAT automatically imports `nat
 - {py:class}`~nat.middleware.function_middleware.FunctionMiddleware`: Base class
 - {py:class}`~nat.middleware.function_middleware.FunctionMiddlewareContext`: Context info
 - {py:class}`~nat.middleware.function_middleware.FunctionMiddlewareChain`: Chain management
-- {py:class}`~nat.middleware.register.CacheMiddlewareConfig`: Cache configuration
-- {py:class}`~nat.middleware.cache_middleware.CacheMiddleware`: Cache implementation
+- {py:class}`~nat.middleware.cache.cache_middleware_config.CacheMiddlewareConfig`: Cache configuration
+- {py:class}`~nat.middleware.cache.cache_middleware.CacheMiddleware`: Cache implementation
 - {py:func}`~nat.cli.register_workflow.register_middleware`: Registration decorator
 
 ## See Also

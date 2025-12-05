@@ -777,7 +777,8 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                     pre_context.function_args = modified_args
             except Exception as e:
                 logger.error(
-                    "Pre-invoke policy '%s' failed for streaming function '%s' - skipping policy and continuing. Error: %s",
+                    "Pre-invoke policy '%s' failed for streaming function '%s' - "
+                    "skipping policy and continuing. Error: %s",
                     policy.name,
                     context.name,
                     str(e),
@@ -805,7 +806,8 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                         current_chunk = modified_chunk
                 except Exception as e:
                     logger.error(
-                        "Post-invoke policy '%s' failed for chunk in streaming function '%s' - skipping policy and continuing. Error: %s",
+                        "Post-invoke policy '%s' failed for chunk in streaming function '%s' - "
+                        "skipping policy and continuing. Error: %s",
                         policy.name,
                         context.name,
                         str(e),
