@@ -60,10 +60,10 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
         self._builder = builder
 
         self._pre_invoke_policies: list[FunctionPolicyBase] = [
-            builder._function_policies[str(ref)].instance for ref in (config.pre_invoke_policy or [])
+            self._get_policy_instance(builder, ref) for ref in (config.pre_invoke_policy or [])
         ]
         self._post_invoke_policies: list[FunctionPolicyBase] = [
-            builder._function_policies[str(ref)].instance for ref in (config.post_invoke_policy or [])
+            self._get_policy_instance(builder, ref) for ref in (config.post_invoke_policy or [])
         ]
 
         self._registered_callables: set[str] = set()
@@ -81,6 +81,26 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
         self._component_allowlists: dict[ComponentGroup, set[str]] = self._build_component_allowlists()
 
         self._discover_workflow()
+
+    def _get_policy_instance(self, builder: Any, ref: Any) -> FunctionPolicyBase:
+        """Retrieve a policy instance from the builder by reference.
+
+        Args:
+            builder: The workflow builder containing registered policies
+            ref: Policy reference (name) to look up
+
+        Returns:
+            The policy instance
+
+        Raises:
+            ValueError: If the referenced policy is not registered in the builder
+        """
+        policy_name = str(ref)
+        if policy_name not in builder._function_policies:
+            available = list(builder._function_policies.keys())
+            raise ValueError(f"Function policy '{policy_name}' not found. "
+                             f"Available policies: {available if available else 'none registered'}")
+        return builder._function_policies[policy_name].instance
 
     # ==================== Component Discovery and Registration ====================
 
@@ -609,9 +629,6 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
             wrapped_function = chain.build_stream(original_function)
         else:
             wrapped_function = chain.build_single(original_function)
-
-        # Track registration
-        self._registered_callables.add(registration_key)
 
         return wrapped_function
 
