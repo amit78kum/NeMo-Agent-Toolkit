@@ -13,16 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import warnings
+# flake8: noqa
+# isort:skip_file
 
-import pytest
+# Register client components
+from .client import client_impl
 
-
-@pytest.fixture(scope="session", autouse=True)
-def ignore_warnings():
-    """
-    Ignore warning about google-cloud-storage deprecation in tests. Remove once issue #1188 is resolved.
-    """
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=FutureWarning, message=r"^Support for google-cloud-storage")
-        yield
+# Register server/frontend components
+from .server import register_frontend
