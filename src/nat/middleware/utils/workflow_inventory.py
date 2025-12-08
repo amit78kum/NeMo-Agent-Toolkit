@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel
@@ -52,7 +53,17 @@ COMPONENT_FUNCTION_ALLOWLISTS: dict[ComponentGroup, set[str]] = {
 }
 
 
-class DiscoveredComponent(BaseModel):
+class DiscoveredBase(BaseModel):
+    """Base class for discovered workflow items."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    name: str = Field(description="Unique name identifier")
+    instance: Any = Field(description="The instance object")
+    config: Any = Field(description="Configuration", default=None)
+
+
+class DiscoveredComponent(DiscoveredBase):
     """Information about a discovered component and its available functions.
 
     Attributes:
@@ -63,13 +74,8 @@ class DiscoveredComponent(BaseModel):
         callable_functions: A set of callable component function names on the instance
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    name: str = Field(description="Component name")
     component_type: ComponentGroup = Field(
         description="Component group (llms, embedders, retrievers, memory, object_stores, authentication)")
-    instance: Any = Field(description="Component instance")
-    config: Any = Field(description="Component configuration", default=None)
     callable_functions: set[str] = Field(description="Set of callable component function names on the instance",
                                          default_factory=set)
 
@@ -88,6 +94,31 @@ class DiscoveredFunction(BaseModel):
     name: str = Field(description="Function name")
     config: FunctionBaseConfig = Field(description="Function configuration")
     instance: Function = Field(description="Function instance")
+
+
+# ==================== Registered Callable Models ====================
+
+
+class RegisteredCallableBase(BaseModel):
+    """Base class for registered callables."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    key: str = Field(description="Unique registration key")
+
+
+class RegisteredFunction(RegisteredCallableBase):
+    """A workflow function registered for middleware interception."""
+
+    function_instance: Function = Field(description="The Function instance")
+
+
+class RegisteredComponentMethod(RegisteredCallableBase):
+    """A component method registered for middleware interception."""
+
+    component_instance: Any = Field(description="The component object")
+    function_name: str = Field(description="The method name on the component")
+    original_callable: Callable = Field(description="The original method to restore")
 
 
 class WorkflowInventory(BaseModel):

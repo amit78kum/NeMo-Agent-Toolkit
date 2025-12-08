@@ -636,6 +636,36 @@ Build order:
 9. Function groups ← Can use middleware
 10. Functions ← Can use middleware
 
+## Dynamic Middleware: Unregistering Callables
+
+The `DynamicFunctionMiddleware` supports unregistering callables at runtime, allowing you to remove middleware interception from workflow functions or component methods.
+
+### Unregister API
+
+The `unregister` method accepts a `RegisteredFunction` or `RegisteredComponentMethod` object:
+
+```python
+from nat.middleware.utils.workflow_inventory import RegisteredFunction, RegisteredComponentMethod
+
+# Get a registered callable by key
+registered = middleware._registered_callables["my_llm.invoke"]
+
+# Unregister it
+middleware.unregister(registered)
+```
+
+### Behavior
+
+- **Workflow Functions**: Removes the `DynamicFunctionMiddleware` from the function's middleware chain
+- **Component Methods**: Restores the original unwrapped method on the component instance
+
+### Registered Callable Models
+
+The tracking uses Pydantic models for type safety:
+
+- **`RegisteredFunction`**: Tracks workflow functions with `key` and `function_instance`
+- **`RegisteredComponentMethod`**: Tracks component methods with `key`, `component_instance`, `function_name`, and `original_callable`
+-
 ## Troubleshooting
 
 ### Common Issues

@@ -622,9 +622,96 @@ def test_register_component_function_prevents_duplicates(llm_client):
                                      instance=llm_client,
                                      callable_functions={"invoke"})
 
-    middleware._registered_callables.add("gpt4.invoke")
+    # Register once
+    middleware._register_component_function(discovered, "invoke")
+    first_registered = middleware._registered_callables.get("gpt4.invoke")
 
+    # Attempt to register again
     middleware._register_component_function(discovered, "invoke")
 
     assert "gpt4.invoke" in middleware._registered_callables
-    assert list(middleware._registered_callables).count("gpt4.invoke") == 1
+    # Should still have only one entry with the same object
+    assert middleware._registered_callables["gpt4.invoke"] is first_registered
+
+
+# ==================== Unregister Tests ====================
+
+
+def test_unregister_workflow_function(mock_function):
+    """Test unregistering a workflow function removes it from middleware interception."""
+    config = DynamicMiddlewareConfig()
+    middleware = DynamicFunctionMiddleware(config=config, builder=Mock(_functions={}))
+
+    discovered = DiscoveredFunction(name="test_function", config=FunctionBaseConfig(), instance=mock_function)
+
+    # Register the function
+    middleware._register_function(discovered)
+    assert "test_function" in middleware._registered_callables
+
+    # Get the registered object
+    registered = middleware._registered_callables["test_function"]
+
+    # Unregister it
+    middleware.unregister(registered)
+
+    # Verify it's removed
+    assert "test_function" not in middleware._registered_callables
+
+
+def test_unregister_component_method(llm_client):
+    """Test unregistering a component method restores the original callable."""
+    config = DynamicMiddlewareConfig()
+    middleware = DynamicFunctionMiddleware(config=config, builder=Mock(_functions={}))
+
+    discovered = DiscoveredComponent(name="gpt4",
+                                     component_type=ComponentGroup.LLMS,
+                                     instance=llm_client,
+                                     callable_functions={"invoke"})
+
+    # Register the component function
+    middleware._register_component_function(discovered, "invoke")
+    assert "gpt4.invoke" in middleware._registered_callables
+
+    # Get the registered object - it contains the original callable
+    registered = middleware._registered_callables["gpt4.invoke"]
+    original_callable = registered.original_callable
+
+    # Unregister it
+    middleware.unregister(registered)
+
+    # Verify it's removed from tracking
+    assert "gpt4.invoke" not in middleware._registered_callables
+
+    # Verify original method is restored (compare by checking it's the stored original)
+    assert llm_client.invoke is original_callable
+
+
+def test_unregister_raises_error_if_not_registered(mock_function):
+    """Test that unregistering a non-registered callable raises ValueError."""
+    from nat.middleware.utils.workflow_inventory import RegisteredFunction
+
+    config = DynamicMiddlewareConfig()
+    middleware = DynamicFunctionMiddleware(config=config, builder=Mock(_functions={}))
+
+    # Create a registered function object that's not actually registered
+    fake_registered = RegisteredFunction(key="nonexistent", function_instance=mock_function)
+
+    with pytest.raises(ValueError, match="'nonexistent' is not registered"):
+        middleware.unregister(fake_registered)
+
+
+def test_unregister_component_method_raises_error_if_not_registered():
+    """Test that unregistering a non-registered component method raises ValueError."""
+    from nat.middleware.utils.workflow_inventory import RegisteredComponentMethod
+
+    config = DynamicMiddlewareConfig()
+    middleware = DynamicFunctionMiddleware(config=config, builder=Mock(_functions={}))
+
+    # Create a registered component method object that's not actually registered
+    fake_registered = RegisteredComponentMethod(key="fake.method",
+                                                component_instance=Mock(),
+                                                function_name="method",
+                                                original_callable=lambda: None)
+
+    with pytest.raises(ValueError, match="'fake.method' is not registered"):
+        middleware.unregister(fake_registered)

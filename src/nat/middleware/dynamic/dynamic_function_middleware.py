@@ -24,7 +24,6 @@ from typing import Any
 from nat.builder.builder import Builder
 from nat.builder.function import Function
 from nat.data_models.component import ComponentGroup
-from nat.data_models.component_ref import FunctionRef
 from nat.function_policy.interface import FunctionPolicyBase
 from nat.function_policy.interface import PostInvokeContext
 from nat.function_policy.interface import PreInvokeContext
@@ -33,10 +32,11 @@ from nat.middleware.function_middleware import CallNext
 from nat.middleware.function_middleware import CallNextStream
 from nat.middleware.function_middleware import FunctionMiddleware
 from nat.middleware.function_middleware import FunctionMiddlewareChain
-from nat.middleware.middleware import FunctionMiddlewareContext
 from nat.middleware.utils.workflow_inventory import COMPONENT_FUNCTION_ALLOWLISTS
 from nat.middleware.utils.workflow_inventory import DiscoveredComponent
 from nat.middleware.utils.workflow_inventory import DiscoveredFunction
+from nat.middleware.utils.workflow_inventory import RegisteredComponentMethod
+from nat.middleware.utils.workflow_inventory import RegisteredFunction
 from nat.middleware.utils.workflow_inventory import WorkflowInventory
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
             self._get_policy_instance(builder, ref) for ref in (config.post_invoke_policy or [])
         ]
 
-        self._registered_callables: set[str] = set()
+        self._registered_callables: dict[str, RegisteredFunction | RegisteredComponentMethod] = {}
 
         self._builder_get_llm: Callable | None = None
         self._builder_get_embedder: Callable | None = None
@@ -526,7 +526,6 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
         Args:
             discovered: A DiscoveredFunction from the workflow inventory
         """
-        function = discovered.instance
         registration_key = discovered.name
 
         if registration_key in self._registered_callables:
@@ -534,11 +533,12 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
             return
 
         # Add this middleware to the function's existing middleware chain
-        existing_middleware = list(function.middleware)
+        existing_middleware = list(discovered.instance.middleware)
         existing_middleware.append(self)
-        function.configure_middleware(existing_middleware)
+        discovered.instance.configure_middleware(existing_middleware)
 
-        self._registered_callables.add(registration_key)
+        self._registered_callables[registration_key] = RegisteredFunction(key=registration_key,
+                                                                          function_instance=discovered.instance)
 
     def _register_component_function(self, discovered: DiscoveredComponent, function_name: str) -> None:
         """Register a specific component function from a discovered component.
@@ -575,14 +575,47 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
             logger.debug("Component function '%s' already registered, skipping", registration_key)
             return
 
+        # Store original callable before wrapping
+        original_callable = getattr(component, function_name)
+
         # Wrap it with middleware
         wrapped_function = self._configure_component_function_middleware(discovered, function_name)
 
         # Replace the function on the component instance
         object.__setattr__(component, function_name, wrapped_function)
 
-        self._registered_callables.add(registration_key)
+        self._registered_callables[registration_key] = RegisteredComponentMethod(key=registration_key,
+                                                                                 component_instance=component,
+                                                                                 function_name=function_name,
+                                                                                 original_callable=original_callable)
         logger.debug("Registered component function '%s'", registration_key)
+
+    def unregister(self, registered: RegisteredFunction | RegisteredComponentMethod) -> None:
+        """Unregister a callable from middleware interception.
+
+        Args:
+            registered: The registered function or component method to unregister
+
+        Raises:
+            ValueError: If not currently registered
+        """
+        if registered.key not in self._registered_callables:
+            raise ValueError(f"'{registered.key}' is not registered")
+
+        if isinstance(registered, RegisteredFunction):
+            # Remove this middleware from the function's middleware chain
+            chain = [m for m in registered.function_instance.middleware if m is not self]
+            registered.function_instance.configure_middleware(chain)
+            logger.debug("Unregistered workflow function '%s' from middleware interception", registered.key)
+
+        elif isinstance(registered, RegisteredComponentMethod):
+            # Restore original callable on the component instance
+            object.__setattr__(registered.component_instance, registered.function_name, registered.original_callable)
+            logger.debug("Unregistered component method '%s.%s' from middleware interception",
+                         type(registered.component_instance).__name__,
+                         registered.function_name)
+
+        del self._registered_callables[registered.key]
 
     def _configure_component_function_middleware(self, discovered: DiscoveredComponent, function_name: str) -> Any:
         """Wrap a component function with middleware interception.
