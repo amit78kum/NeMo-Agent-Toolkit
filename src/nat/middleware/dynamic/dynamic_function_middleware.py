@@ -24,6 +24,7 @@ from typing import Any
 from nat.builder.builder import Builder
 from nat.builder.function import Function
 from nat.data_models.component import ComponentGroup
+from nat.data_models.component_ref import FunctionRef
 from nat.function_policy.interface import FunctionPolicyBase
 from nat.function_policy.interface import PostInvokeContext
 from nat.function_policy.interface import PreInvokeContext
@@ -32,6 +33,7 @@ from nat.middleware.function_middleware import CallNext
 from nat.middleware.function_middleware import CallNextStream
 from nat.middleware.function_middleware import FunctionMiddleware
 from nat.middleware.function_middleware import FunctionMiddlewareChain
+from nat.middleware.middleware import FunctionMiddlewareContext
 from nat.middleware.utils.workflow_inventory import COMPONENT_FUNCTION_ALLOWLISTS
 from nat.middleware.utils.workflow_inventory import DiscoveredComponent
 from nat.middleware.utils.workflow_inventory import DiscoveredFunction
@@ -590,6 +592,25 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                                                                                  original_callable=original_callable)
         logger.debug("Registered component function '%s'", registration_key)
 
+    def get_registered(self, key: str) -> RegisteredFunction | RegisteredComponentMethod | None:
+        """Get a registered callable by its key.
+
+        Args:
+            key: The registration key (for example, "my_llm.invoke" or "calculator.add")
+
+        Returns:
+            The RegisteredFunction or RegisteredComponentMethod if found, None otherwise
+        """
+        return self._registered_callables.get(key)
+
+    def get_registered_keys(self) -> list[str]:
+        """Get all registered callable keys.
+
+        Returns:
+            List of all registration keys currently tracked by this middleware
+        """
+        return list(self._registered_callables.keys())
+
     def unregister(self, registered: RegisteredFunction | RegisteredComponentMethod) -> None:
         """Unregister a callable from middleware interception.
 
@@ -750,13 +771,10 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                         raise ValueError(f"Policy '{policy.name}' returned {len(modified_args)} args, "
                                          f"expected {len(pre_context.function_args)}")
                     pre_context.function_args = modified_args
-            except Exception as e:
-                logger.error(
-                    "Pre-invoke policy '%s' failed for function '%s' - skipping policy and continuing. Error: %s",
-                    policy.name,
-                    context.name,
-                    str(e),
-                    exc_info=True)
+            except Exception:
+                logger.exception("Pre-invoke policy '%s' failed for function '%s' - skipping policy and continuing",
+                                 policy.name,
+                                 context.name)
 
         # INVOKE: Call actual function with transformed args
         output = await call_next(*pre_context.function_args, **kwargs)
@@ -767,7 +785,6 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                                          function_args=pre_context.function_args,
                                          function_kwargs=kwargs,
                                          function_output=output)
-        current_output = output
 
         for policy in self._post_invoke_policies:
             if not policy.config.enabled:
@@ -777,16 +794,13 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                 modified_output = await policy.on_post_invoke(post_context)
 
                 if modified_output is not None:
-                    current_output = modified_output
-            except Exception as e:
-                logger.error(
-                    "Post-invoke policy '%s' failed for function '%s' - skipping policy and continuing. Error: %s",
-                    policy.name,
-                    context.name,
-                    str(e),
-                    exc_info=True)
+                    post_context.function_output = modified_output
+            except Exception:
+                logger.exception("Post-invoke policy '%s' failed for function '%s' - skipping policy and continuing",
+                                 policy.name,
+                                 context.name)
 
-        return current_output
+        return post_context.function_output
 
     async def function_middleware_stream(self,
                                          *args: Any,
@@ -825,14 +839,12 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                         raise ValueError(f"Policy '{policy.name}' returned {len(modified_args)} args, "
                                          f"expected {len(pre_context.function_args)}")
                     pre_context.function_args = modified_args
-            except Exception as e:
-                logger.error(
+            except Exception:
+                logger.exception(
                     "Pre-invoke policy '%s' failed for streaming function '%s' - "
-                    "skipping policy and continuing. Error: %s",
+                    "skipping policy and continuing",
                     policy.name,
-                    context.name,
-                    str(e),
-                    exc_info=True)
+                    context.name)
 
         # STREAM: Call function with transformed args and yield chunks
         async for chunk in call_next(*pre_context.function_args, **kwargs):
@@ -843,7 +855,6 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                                              function_args=pre_context.function_args,
                                              function_kwargs=kwargs,
                                              function_output=chunk)
-            current_chunk = chunk
 
             for policy in self._post_invoke_policies:
                 if not policy.config.enabled:
@@ -853,16 +864,16 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                     modified_chunk = await policy.on_post_invoke(post_context)
 
                     if modified_chunk is not None:
-                        current_chunk = modified_chunk
-                except Exception as e:
-                    logger.error(
+                        post_context.function_output = modified_chunk
+
+                except Exception:
+                    logger.exception(
                         "Post-invoke policy '%s' failed for chunk in streaming function '%s' - "
-                        "skipping policy and continuing. Error: %s",
+                        "skipping policy and continuing",
                         policy.name,
-                        context.name,
-                        str(e),
-                        exc_info=True)
-            yield current_chunk
+                        context.name)
+
+            yield post_context.function_output
 
     # ==================== Helper Methods ====================
 
@@ -927,7 +938,7 @@ class DynamicFunctionMiddleware(FunctionMiddleware):
                 return False
 
             # Skip static/class methods
-            if isinstance(class_attr, (staticmethod, classmethod)):
+            if isinstance(class_attr, staticmethod | classmethod):
                 return False
 
             # Get instance attribute

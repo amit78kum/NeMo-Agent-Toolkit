@@ -713,5 +713,5 @@ def test_unregister_component_method_raises_error_if_not_registered():
                                                 function_name="method",
                                                 original_callable=lambda: None)
 
-    with pytest.raises(ValueError, match="'fake.method' is not registered"):
+    with pytest.raises(ValueError, match=r"'fake\.method' is not registered"):
         middleware.unregister(fake_registered)

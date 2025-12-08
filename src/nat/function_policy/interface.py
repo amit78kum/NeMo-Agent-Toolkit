@@ -44,18 +44,20 @@ class PreInvokeContext:
     function_kwargs: dict[str, Any]
 
 
-@dataclass(frozen=True)
+@dataclass
 class PostInvokeContext:
     """Context for post-invoke policy execution.
 
-    Contains the complete execution state after function runs.
+    Contains the complete execution state after function runs. The function_output
+    field is mutable to support transformation chains where each policy can modify
+    the output and pass it to the next policy.
 
     Attributes:
         function_context: Metadata about the function being intercepted
         original_args: The original positional arguments
         function_args: The args that were sent to the function
         function_kwargs: Additional function arguments
-        function_output: The output returned by the function
+        function_output: The current output (updated after each policy in the chain)
     """
     function_context: FunctionMiddlewareContext
     original_args: tuple[Any, ...]

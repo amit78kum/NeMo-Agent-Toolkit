@@ -642,16 +642,20 @@ The `DynamicFunctionMiddleware` supports unregistering callables at runtime, all
 
 ### Unregister API
 
-The `unregister` method accepts a `RegisteredFunction` or `RegisteredComponentMethod` object:
+The `unregister` method accepts a `RegisteredFunction` or `RegisteredComponentMethod` object. Use the `get_registered()` method to retrieve a registered callable by its key:
 
 ```python
 from nat.middleware.utils.workflow_inventory import RegisteredFunction, RegisteredComponentMethod
 
 # Get a registered callable by key
-registered = middleware._registered_callables["my_llm.invoke"]
+registered = middleware.get_registered("my_llm.invoke")
 
-# Unregister it
-middleware.unregister(registered)
+# Unregister it (if found)
+if registered:
+    middleware.unregister(registered)
+
+# List all registered keys
+all_keys = middleware.get_registered_keys()
 ```
 
 ### Behavior
@@ -665,7 +669,6 @@ The tracking uses Pydantic models for type safety:
 
 - **`RegisteredFunction`**: Tracks workflow functions with `key` and `function_instance`
 - **`RegisteredComponentMethod`**: Tracks component methods with `key`, `component_instance`, `function_name`, and `original_callable`
--
 ## Troubleshooting
 
 ### Common Issues
